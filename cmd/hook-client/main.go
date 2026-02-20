@@ -30,7 +30,7 @@ func main() {
 
 	config := Config{
 		MonitorURL: discoverMonitorURL(hookDir),
-		Timeout:    time.Duration(getEnvInt("HOOK_TIMEOUT", 5)) * time.Second,
+		Timeout:    time.Duration(getEnvInt("HOOK_TIMEOUT", 2)) * time.Second,
 		ConfigPath: filepath.Join(hookDir, "hook_monitor.conf"),
 	}
 

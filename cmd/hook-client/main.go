@@ -8,9 +8,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
+
+const maxStdinLen = 1 << 20 // 1 MiB — generous limit for hook payloads.
 
 // Config holds hook client configuration sourced from environment variables.
 type Config struct {
@@ -30,8 +34,8 @@ func main() {
 		ConfigPath: filepath.Join(hookDir, "hook_monitor.conf"),
 	}
 
-	// Read JSON from stdin.
-	stdinData, err := io.ReadAll(os.Stdin)
+	// Read JSON from stdin (bounded to prevent runaway memory usage).
+	stdinData, err := io.ReadAll(io.LimitReader(os.Stdin, maxStdinLen))
 	if err != nil {
 		os.Exit(0)
 	}
@@ -83,7 +87,10 @@ func main() {
 
 // sendToMonitor POSTs the payload to the monitor server's hook endpoint.
 func sendToMonitor(config Config, hookType string, payload []byte) {
-	client := &http.Client{Timeout: config.Timeout}
+	client := &http.Client{
+		Timeout:   config.Timeout,
+		Transport: &http.Transport{DisableKeepAlives: true},
+	}
 
 	url := config.MonitorURL + "/hook/" + hookType
 	req, err := http.NewRequest("POST", url, bytes.NewReader(payload))
@@ -164,10 +171,15 @@ func discoverMonitorURL(hookDir string) string {
 	return "http://localhost:8080"
 }
 
-// truncate limits a string to maxLen characters.
+// truncate limits a string to approximately maxLen bytes without
+// splitting multi-byte UTF-8 characters.
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
+	}
+	// Walk backwards from the cut point to find a valid rune boundary.
+	for maxLen > 0 && !utf8.RuneStart(s[maxLen]) {
+		maxLen--
 	}
 	return s[:maxLen]
 }
@@ -186,15 +198,9 @@ func getEnvInt(key string, defaultValue int) int {
 	if value == "" {
 		return defaultValue
 	}
-	result := 0
-	for _, c := range value {
-		if c < '0' || c > '9' {
-			return defaultValue
-		}
-		result = result*10 + int(c-'0')
+	n, err := strconv.Atoi(value)
+	if err != nil || n <= 0 {
+		return defaultValue
 	}
-	if result > 0 {
-		return result
-	}
-	return defaultValue
+	return n
 }

@@ -17,7 +17,34 @@ import (
 	"github.com/fatih/color"
 )
 
-const maxEvents = 1000
+const (
+	maxEvents  = 1000
+	maxBodyLen = 1 << 20 // 1 MiB — generous limit for hook payloads.
+)
+
+// separator is pre-computed once to avoid re-allocating on every event.
+var separator = strings.Repeat("═", 80)
+
+// hookColors maps hook types to pre-computed color printers.
+var hookColors = map[string]*color.Color{
+	"SessionStart":       color.New(color.FgGreen, color.Bold),
+	"SessionEnd":         color.New(color.FgRed, color.Bold),
+	"PreToolUse":         color.New(color.FgYellow, color.Bold),
+	"PostToolUse":        color.New(color.FgCyan, color.Bold),
+	"PostToolUseFailure": color.New(color.FgHiRed, color.Bold),
+	"UserPromptSubmit":   color.New(color.FgMagenta, color.Bold),
+	"Notification":       color.New(color.FgBlue, color.Bold),
+	"PermissionRequest":  color.New(color.FgWhite, color.Bold),
+	"Stop":               color.New(color.FgRed),
+	"SubagentStart":      color.New(color.FgHiCyan),
+	"SubagentStop":       color.New(color.FgHiCyan, color.Bold),
+	"TeammateIdle":       color.New(color.FgHiBlue),
+	"TaskCompleted":      color.New(color.FgHiGreen),
+	"ConfigChange":       color.New(color.FgHiYellow),
+	"PreCompact":         color.New(color.FgHiMagenta),
+}
+
+var defaultColor = color.New(color.FgWhite)
 
 // HookEvent represents a single hook event received from Claude Code.
 type HookEvent struct {
@@ -42,35 +69,46 @@ func NewHookMonitor() *HookMonitor {
 }
 
 // AddEvent appends an event to the buffer (thread-safe, bounded).
+// Logging happens outside the lock to avoid blocking readers during I/O.
 func (m *HookMonitor) AddEvent(event HookEvent) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	m.events = append(m.events, event)
-	// Trim oldest when exceeding max — drop 100 at once to amortize cost.
+	// Trim oldest when exceeding max — copy into a fresh slice so the GC
+	// can reclaim the old backing array (avoids the slice-pinning leak).
 	if len(m.events) > maxEvents {
-		m.events = m.events[100:]
+		keep := len(m.events) - (maxEvents - 100)
+		fresh := make([]HookEvent, maxEvents-100, maxEvents+1)
+		copy(fresh, m.events[keep:])
+		m.events = fresh
 	}
 	m.stats[event.HookType]++
-	m.logEvent(event)
+	m.mu.Unlock()
+
+	logEvent(event)
 }
 
-// logEvent prints a colorized event to the console. Called under lock.
-func (m *HookMonitor) logEvent(event HookEvent) {
-	separator := strings.Repeat("═", 80)
-
+// logEvent prints a colorized event to the console.
+// Called outside the lock — builds the full output first, then writes once.
+func logEvent(event HookEvent) {
 	printer := hookColor(event.HookType)
 
-	fmt.Println(separator)
-	printer.Printf("  ⚡ %s\n", event.HookType)
-	fmt.Printf("  🕐 %s\n", event.Timestamp.Format("15:04:05.000"))
+	var buf strings.Builder
+	buf.WriteString(separator)
+	buf.WriteByte('\n')
 
-	jsonBytes, err := json.MarshalIndent(event.Data, "  ", "  ")
-	if err == nil {
-		fmt.Printf("  %s\n", string(jsonBytes))
+	// Color-formatted hook type line.
+	buf.WriteString(printer.Sprintf("  ⚡ %s\n", event.HookType))
+	buf.WriteString(fmt.Sprintf("  🕐 %s\n", event.Timestamp.Format("15:04:05.000")))
+
+	if jsonBytes, err := json.MarshalIndent(event.Data, "  ", "  "); err == nil {
+		buf.WriteString("  ")
+		buf.Write(jsonBytes)
+		buf.WriteByte('\n')
 	}
-	fmt.Println(separator)
-	fmt.Println()
+	buf.WriteString(separator)
+	buf.WriteByte('\n')
+
+	fmt.Print(buf.String())
 }
 
 // GetStats returns a copy of the stats map (thread-safe).
@@ -99,42 +137,12 @@ func (m *HookMonitor) GetEvents(limit int) []HookEvent {
 	return result
 }
 
-// hookColor returns the color printer for a given hook type.
+// hookColor returns the pre-computed color printer for a given hook type.
 func hookColor(hookType string) *color.Color {
-	switch hookType {
-	case "SessionStart":
-		return color.New(color.FgGreen, color.Bold)
-	case "SessionEnd":
-		return color.New(color.FgRed, color.Bold)
-	case "PreToolUse":
-		return color.New(color.FgYellow, color.Bold)
-	case "PostToolUse":
-		return color.New(color.FgCyan, color.Bold)
-	case "PostToolUseFailure":
-		return color.New(color.FgHiRed, color.Bold)
-	case "UserPromptSubmit":
-		return color.New(color.FgMagenta, color.Bold)
-	case "Notification":
-		return color.New(color.FgBlue, color.Bold)
-	case "PermissionRequest":
-		return color.New(color.FgWhite, color.Bold)
-	case "Stop":
-		return color.New(color.FgRed)
-	case "SubagentStart":
-		return color.New(color.FgHiCyan)
-	case "SubagentStop":
-		return color.New(color.FgHiCyan, color.Bold)
-	case "TeammateIdle":
-		return color.New(color.FgHiBlue)
-	case "TaskCompleted":
-		return color.New(color.FgHiGreen)
-	case "ConfigChange":
-		return color.New(color.FgHiYellow)
-	case "PreCompact":
-		return color.New(color.FgHiMagenta)
-	default:
-		return color.New(color.FgWhite)
+	if c, ok := hookColors[hookType]; ok {
+		return c
 	}
+	return defaultColor
 }
 
 // handleHook returns an HTTP handler for a specific hook type.
@@ -144,13 +152,13 @@ func handleHook(monitor *HookMonitor, hookType string) http.HandlerFunc {
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 			return
 		}
+		defer r.Body.Close()
 
-		body, err := io.ReadAll(r.Body)
+		body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyLen))
 		if err != nil {
 			http.Error(w, `{"error":"failed to read body"}`, http.StatusBadRequest)
 			return
 		}
-		defer r.Body.Close()
 
 		var data map[string]interface{}
 		if len(body) > 0 {
@@ -261,7 +269,7 @@ func showRunningInstance(portFilePath string) {
 	fmt.Println()
 
 	// Read PID from lock file.
-	lockPath := portFilePath[:len(portFilePath)-len(".monitor-port")] + ".monitor-lock"
+	lockPath := strings.TrimSuffix(portFilePath, ".monitor-port") + ".monitor-lock"
 	if pidBytes, err := os.ReadFile(lockPath); err == nil {
 		pid := strings.TrimSpace(string(pidBytes))
 		info.Printf("  PID:  %s\n", pid)

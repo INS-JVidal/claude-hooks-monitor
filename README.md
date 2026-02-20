@@ -9,9 +9,10 @@ A real-time monitoring and logging system for Claude Code CLI hooks. Watch every
 - REST API with `/stats`, `/events`, `/health` endpoints
 - Per-hook toggle config — enable/disable individual hooks without restarting
 - Non-blocking — hooks always exit 0, never interfere with Claude
-- Bounded memory — ring buffer caps event history at 1000
+- Bounded memory — ring buffer caps event history at 1000, with proper GC-friendly compaction
+- Go hook-client binary — fast, single-shot forwarder with 2s timeout
+- Python hook script alternative (reads `hook_event_name` from stdin)
 - End-to-end test suite with 3 test phases
-- Single universal Python hook script (reads `hook_event_name` from stdin)
 
 ## Prerequisites
 
@@ -131,7 +132,7 @@ make test
 |----------|---------|---------|
 | `PORT` | 8080 | Server listen port |
 | `HOOK_MONITOR_URL` | http://localhost:8080 | Server URL (for Python script) |
-| `HOOK_TIMEOUT` | 5 | HTTP timeout in seconds |
+| `HOOK_TIMEOUT` | 2 | HTTP timeout in seconds |
 
 ### Hook Toggle (hooks/hook_monitor.conf)
 
@@ -189,9 +190,12 @@ claude-hooks-monitor/
 ├── .claude/
 │   └── settings.json         # Hook config + permissions
 ├── hooks/
-│   ├── hook_monitor.py       # Universal Python hook script
-│   └── hook_monitor.conf     # Toggle: enable/disable hooks
-├── main.go                   # Go server
+│   ├── hook-client            # Compiled Go hook client binary
+│   ├── hook_monitor.py        # Alternative Python hook script
+│   └── hook_monitor.conf      # Toggle: enable/disable hooks
+├── cmd/
+│   └── hook-client/main.go    # Go hook client source
+├── main.go                    # Go server
 ├── go.mod / go.sum           # Go dependencies
 ├── Makefile                  # Build automation
 ├── test-hooks.sh             # Test suite (3 phases)
@@ -199,6 +203,18 @@ claude-hooks-monitor/
 ├── EXAMPLES.md               # Output examples
 └── ARCHITECTURE.md           # Architecture deep-dive
 ```
+
+## Performance
+
+The codebase is optimized for minimal impact on Claude Code responsiveness:
+
+- **Ring buffer compaction** — uses `copy()` into fresh slices so the GC can reclaim old backing arrays (avoids the classic Go slice-pinning memory leak)
+- **Lock-free logging** — event logging (JSON marshal + terminal I/O) happens outside the mutex, so concurrent API readers are never blocked by console output
+- **Pre-computed colors** — hook type colors are allocated once at startup in a map, not on every event
+- **Bounded I/O** — both server and hook-client cap request/stdin reads at 1 MiB via `io.LimitReader`
+- **Single-shot HTTP** — hook-client disables keep-alive since it's a short-lived process (one request, then exit)
+- **UTF-8 safe truncation** — string truncation respects rune boundaries to avoid producing invalid UTF-8
+- **2-second timeout** — hook-client times out quickly if the monitor is unreachable; connection-refused returns in milliseconds
 
 ## Next Steps
 

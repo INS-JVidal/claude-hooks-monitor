@@ -1,0 +1,44 @@
+# Binaries
+bin/
+hooks/hook-client
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go
+*.test
+*.out
+go.work
+
+# Runtime
+hooks/.monitor-port
+hooks/.monitor-lock
+
+# Logs
+*.log
+monitor.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local env
+.env
+.env.local

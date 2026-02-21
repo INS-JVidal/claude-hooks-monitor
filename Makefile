@@ -8,7 +8,7 @@ GO          := /usr/local/go/bin/go
 HOOK_DIR    := hooks
 CONF        := $(HOOK_DIR)/hook_monitor.conf
 
-.PHONY: help deps build build-hook-client run run-background test test-api send-test-hook \
+.PHONY: help deps build build-hook-client run run-ui run-background test test-api send-test-hook \
         clean install check stats show-config reset-config
 
 help: ## Show all targets with descriptions
@@ -35,9 +35,12 @@ build-hook-client: ## Build only the hook client binary
 	$(GO) build -ldflags="-s -w" -o $(HOOK_CLIENT) ./cmd/hook-client
 	@echo "Built $(HOOK_CLIENT)"
 
-run: ## Run server (foreground)
+run: ## Run server (foreground, console output)
 	@echo "Starting monitor on port $(PORT)..."
-	PORT=$(PORT) $(GO) run main.go
+	PORT=$(PORT) $(GO) run .
+
+run-ui: build ## Run server with interactive tree UI
+	PORT=$(PORT) ./$(BINARY) --ui
 
 run-background: ## Run server in background (output to monitor.log)
 	@mkdir -p bin

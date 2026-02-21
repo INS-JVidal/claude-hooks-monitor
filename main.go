@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"claude-hooks-monitor/internal/hookevt"
 	"claude-hooks-monitor/tui"
@@ -46,6 +48,11 @@ func main() {
 	if portFile == "" {
 		portFile = "hooks/.monitor-port"
 	}
+	// Reject absolute paths or path traversal in PORT_FILE.
+	if filepath.IsAbs(portFile) || strings.Contains(portFile, "..") {
+		fmt.Fprintf(os.Stderr, "Error: PORT_FILE must be a relative path without '..'\n")
+		os.Exit(1)
+	}
 	lockFile := strings.TrimSuffix(portFile, ".monitor-port") + ".monitor-lock"
 
 	// Single-instance guard.
@@ -76,12 +83,12 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	ln, err := net.Listen("tcp", ":"+port)
+	ln, err := net.Listen("tcp", "127.0.0.1:"+port)
 	if err != nil {
 		if !*uiMode {
 			color.New(color.FgYellow).Printf("  Port %s in use, finding available port...\n", port)
 		}
-		ln, err = net.Listen("tcp", ":0")
+		ln, err = net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error starting server: %v\n", err)
 			os.Exit(1)
@@ -90,7 +97,7 @@ func main() {
 	actualPort := ln.Addr().(*net.TCPAddr).Port
 
 	// Write port file so hook-client can discover us.
-	if err := os.WriteFile(portFile, []byte(strconv.Itoa(actualPort)), 0644); err != nil {
+	if err := os.WriteFile(portFile, []byte(strconv.Itoa(actualPort)), 0600); err != nil {
 		if !*uiMode {
 			color.New(color.FgYellow).Printf("  Warning: could not write port file %s: %v\n", portFile, err)
 		}
@@ -100,13 +107,30 @@ func main() {
 
 	// Coordinated shutdown: context signals goroutines, deferred cleanup always runs.
 	ctx, cancel := context.WithCancel(context.Background())
-	server := &http.Server{Handler: mux}
+
+	// Wrap mux with security headers; optionally add bearer token auth.
+	var handler http.Handler = mux
+	handler = securityHeaders(handler)
+	token := os.Getenv("HOOK_MONITOR_TOKEN")
+	if token != "" {
+		handler = authMiddleware(token, handler)
+	}
+
+	server := &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 
 	// Unified cleanup — deferred so it runs on both normal exit and signal-triggered exit.
 	// No os.Exit calls below this point; both modes fall through to defers.
 	defer func() {
 		cancel()
-		server.Shutdown(context.Background())
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		server.Shutdown(shutdownCtx)
 		os.Remove(portFile)
 		lockFd.Close()
 		os.Remove(lockFile)
@@ -120,7 +144,9 @@ func main() {
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 		<-sig
 		cancel()
-		server.Shutdown(context.Background())
+		sigCtx, sigCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer sigCancel()
+		server.Shutdown(sigCtx)
 	}()
 
 	if *uiMode {

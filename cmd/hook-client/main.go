@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -28,10 +29,20 @@ func main() {
 	execPath, _ := os.Executable()
 	hookDir := filepath.Dir(execPath)
 
+	timeout := getEnvInt("HOOK_TIMEOUT", 2)
+	if timeout > 10 {
+		timeout = 10
+	}
+
 	config := Config{
 		MonitorURL: discoverMonitorURL(hookDir),
-		Timeout:    time.Duration(getEnvInt("HOOK_TIMEOUT", 2)) * time.Second,
+		Timeout:    time.Duration(timeout) * time.Second,
 		ConfigPath: filepath.Join(hookDir, "hook_monitor.conf"),
+	}
+
+	// No monitor URL means we couldn't find a valid target — skip silently.
+	if config.MonitorURL == "" {
+		os.Exit(0)
 	}
 
 	// Read JSON from stdin (bounded to prevent runaway memory usage).
@@ -78,6 +89,9 @@ func main() {
 		os.Exit(0)
 	}
 
+	// URL-escape hookType to prevent path traversal (e.g. "../../admin").
+	hookType = url.PathEscape(hookType)
+
 	// Send to monitor server.
 	sendToMonitor(config, hookType, payload)
 
@@ -92,12 +106,17 @@ func sendToMonitor(config Config, hookType string, payload []byte) {
 		Transport: &http.Transport{DisableKeepAlives: true},
 	}
 
-	url := config.MonitorURL + "/hook/" + hookType
-	req, err := http.NewRequest("POST", url, bytes.NewReader(payload))
+	targetURL := config.MonitorURL + "/hook/" + hookType
+	req, err := http.NewRequest("POST", targetURL, bytes.NewReader(payload))
 	if err != nil {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+
+	// Add bearer token if configured.
+	if token := os.Getenv("HOOK_MONITOR_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -155,17 +174,26 @@ func isHookEnabled(configPath, hookName string) bool {
 // discoverMonitorURL returns the monitor URL.
 // Priority: HOOK_MONITOR_URL env var → .monitor-port file → default.
 func discoverMonitorURL(hookDir string) string {
-	if url := os.Getenv("HOOK_MONITOR_URL"); url != "" {
-		return url
+	if urlStr := os.Getenv("HOOK_MONITOR_URL"); urlStr != "" {
+		u, err := url.Parse(urlStr)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			return "" // invalid URL — fail-safe: skip sending
+		}
+		host := u.Hostname()
+		if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+			return "" // refuse non-loopback targets
+		}
+		return urlStr
 	}
 
 	portFile := filepath.Join(hookDir, ".monitor-port")
 	data, err := os.ReadFile(portFile)
 	if err == nil {
 		port := strings.TrimSpace(string(data))
-		if port != "" {
+		if _, err := strconv.Atoi(port); err == nil && port != "" {
 			return "http://localhost:" + port
 		}
+		return "" // invalid port file content
 	}
 
 	return "http://localhost:8080"

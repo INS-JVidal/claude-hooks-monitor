@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -16,7 +17,7 @@ import (
 // If another instance holds the lock, it reads the existing port file
 // and prints info about the running instance, then exits.
 func acquireLock(lockPath, portFilePath string) *os.File {
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error opening lock file: %v\n", err)
 		os.Exit(1)
@@ -32,8 +33,12 @@ func acquireLock(lockPath, portFilePath string) *os.File {
 	}
 
 	// Write our PID into the lock file for diagnostics.
-	f.Truncate(0)
-	f.Seek(0, 0)
+	if err := f.Truncate(0); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: truncate lock file: %v\n", err)
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: seek lock file: %v\n", err)
+	}
 	fmt.Fprintf(f, "%d", os.Getpid())
 	f.Sync()
 
@@ -58,6 +63,13 @@ func showRunningInstance(lockPath, portFilePath string) {
 	// Read port from port file.
 	if portBytes, err := os.ReadFile(portFilePath); err == nil {
 		port := strings.TrimSpace(string(portBytes))
+
+		// Validate port is numeric before using in HTTP request.
+		if _, err := strconv.Atoi(port); err != nil {
+			info.Println("  Port: invalid port file")
+			return
+		}
+
 		info.Printf("  URL:  http://localhost:%s\n", port)
 
 		// Try to fetch stats from the running instance.

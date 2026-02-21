@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"claude-hooks-monitor/internal/hookevt"
@@ -76,6 +77,12 @@ func main() {
 	for _, ht := range hookTypes {
 		mux.HandleFunc("/hook/"+ht, server.HandleHook(mon, ht))
 	}
+	// Catch-all for unknown hook types — returns 404 with an informative message
+	// instead of the default mux's generic "404 page not found".
+	mux.HandleFunc("/hook/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error":"unknown hook type"}`, http.StatusNotFound)
+	})
 	mux.HandleFunc("/stats", server.HandleStats(mon))
 	mux.HandleFunc("/events", server.HandleEvents(mon))
 	mux.HandleFunc("/health", server.HandleHealth)
@@ -98,8 +105,9 @@ func main() {
 	}
 	actualPort := ln.Addr().(*net.TCPAddr).Port
 
-	// Write port file so hook-client can discover us.
-	if err := os.WriteFile(portFile, []byte(strconv.Itoa(actualPort)), 0600); err != nil {
+	// Write port file atomically (temp + rename) so hook-client never reads
+	// a partial or empty file during the brief write window.
+	if err := atomicWriteFile(portFile, []byte(strconv.Itoa(actualPort)), 0600); err != nil {
 		if !*uiMode {
 			color.New(color.FgYellow).Printf("  Warning: could not write port file %s: %v\n", portFile, err)
 		}
@@ -126,29 +134,40 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	// Unified cleanup — deferred so it runs on both normal exit and signal-triggered exit.
-	// No os.Exit calls below this point; both modes fall through to defers.
-	defer func() {
+	// Consolidated shutdown — cancel context + gracefully drain HTTP server.
+	// sync.Once ensures this runs exactly once regardless of trigger (signal vs normal exit).
+	var shutdownOnce sync.Once
+	doShutdown := func() {
 		cancel()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
 		srv.Shutdown(shutdownCtx)
+	}
+
+	// Deferred cleanup — always runs when main() returns.
+	defer func() {
+		shutdownOnce.Do(doShutdown)
+		// Close the TUI event channel via CloseChannel() — this atomically sets
+		// a "closed" flag under the monitor's lock, preventing any in-flight
+		// AddEvent from sending on the closed channel (which would panic).
+		mon.CloseChannel()
 		os.Remove(portFile)
 		lockFd.Close()
 		os.Remove(lockFile)
 	}()
 
-	// Unified signal handler for both modes.
-	// Cancels context (signals TUI to quit) and shuts down HTTP server
-	// (unblocks server.Serve in console mode).
+	// Signal handler — cancels context and shuts down server on SIGINT/SIGTERM.
+	// Selects on ctx.Done() so it exits cleanly on normal shutdown (no goroutine leak).
 	go func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, platform.ShutdownSignals...)
-		<-sig
-		cancel()
-		sigCtx, sigCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer sigCancel()
-		srv.Shutdown(sigCtx)
+		defer signal.Stop(sig)
+		select {
+		case <-sig:
+			shutdownOnce.Do(doShutdown)
+		case <-ctx.Done():
+			// Normal exit (TUI quit or server stopped) — nothing to do.
+		}
 	}()
 
 	if *uiMode {
@@ -180,4 +199,35 @@ func printBanner(port, numHooks int) {
 	fmt.Printf("  Listening on http://localhost:%d\n\n", port)
 	color.New(color.FgHiYellow).Println("  Waiting for hook events...")
 	fmt.Println()
+}
+
+// atomicWriteFile writes data to a temp file and renames it to the target path.
+// Readers never see a partial file — they get either the old content or the new.
+func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp.*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	// Rename is atomic on the same filesystem (POSIX guarantee).
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
 }

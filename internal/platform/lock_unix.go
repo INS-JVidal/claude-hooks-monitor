@@ -14,8 +14,12 @@ import (
 func AcquireLock(lockPath, portFilePath string) *os.File {
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
+		if os.IsPermission(err) {
+			fmt.Fprintf(os.Stderr, "Error: permission denied opening lock file: %s\n", lockPath)
+			os.Exit(2) // distinct from "already running" (exit 1)
+		}
 		fmt.Fprintf(os.Stderr, "Error opening lock file: %v\n", err)
-		os.Exit(1)
+		os.Exit(2)
 	}
 
 	// Try non-blocking exclusive lock.

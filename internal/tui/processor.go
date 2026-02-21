@@ -9,13 +9,18 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
+// maxPendingPerKey caps how many unmatched PreToolUse events are queued per
+// pairKey. This prevents unbounded memory growth if Posts never arrive (e.g.
+// tool calls that crash without triggering PostToolUse).
+const maxPendingPerKey = 50
+
 // EventProcessor groups incoming hook events into the tree data model.
 type EventProcessor struct {
 	sessions       []*Session
 	sessionMap     map[string]*Session
 	currentSession *Session
 	currentRequest *UserRequest
-	pendingPre     map[string][]*EventNode // tool_name → queue of unmatched Pre events (FIFO)
+	pendingPre     map[string][]*EventNode // pairKey → queue of unmatched Pre events (FIFO)
 }
 
 // NewEventProcessor returns an initialized processor.
@@ -51,6 +56,13 @@ func (p *EventProcessor) Process(event hookevt.HookEvent) (sessions []*Session) 
 
 func (p *EventProcessor) handleSessionStart(event hookevt.HookEvent) {
 	sid := strVal(event.Data, "session_id")
+
+	// Clear stale pending Pre entries from any previous session that ended
+	// abnormally (no SessionEnd fired, e.g. SIGKILL). Without this, stale
+	// entries leak across sessions and cause wrong Pre/Post pairings.
+	for k := range p.pendingPre {
+		delete(p.pendingPre, k)
+	}
 
 	// Check if session already exists (e.g., reconnect).
 	if s, ok := p.sessionMap[sid]; ok {
@@ -117,23 +129,42 @@ func (p *EventProcessor) handleGenericEvent(event hookevt.HookEvent) {
 		Data:      event.Data,
 	}
 
+	// Use tool_use_id for Pre/Post pairing when available — this correctly
+	// handles concurrent tool calls of the same type (e.g. two parallel Bash
+	// calls). Falls back to tool_name when tool_use_id is absent.
+	pairKey := strVal(event.Data, "tool_use_id")
+	if pairKey == "" {
+		pairKey = toolName
+	}
+
 	switch event.HookType {
 	case "PreToolUse":
-		// Push onto pending stack for this tool name.
-		p.pendingPre[toolName] = append(p.pendingPre[toolName], node)
+		queue := p.pendingPre[pairKey]
+		// Cap per-key queue to prevent unbounded growth if Posts never arrive
+		// (e.g. crashed tool calls). Oldest unmatched Pre is evicted.
+		if len(queue) >= maxPendingPerKey {
+			queue = queue[1:]
+		}
+		p.pendingPre[pairKey] = append(queue, node)
 		p.appendToCurrentRequest(node, event.Timestamp)
 
 	case "PostToolUse", "PostToolUseFailure":
 		// Dequeue matching Pre (FIFO — oldest Pre pairs with first Post).
-		if stack := p.pendingPre[toolName]; len(stack) > 0 {
+		if stack := p.pendingPre[pairKey]; len(stack) > 0 {
 			pre := stack[0]
-			p.pendingPre[toolName] = stack[1:]
+			if len(stack) == 1 {
+				delete(p.pendingPre, pairKey) // clean up empty entry
+			} else {
+				p.pendingPre[pairKey] = stack[1:]
+			}
 			pre.PostPair = node
 			// Don't add Post as a separate event — it's nested under Pre.
-		} else {
-			// Orphaned Post — add as standalone.
+		} else if p.currentSession != nil {
+			// Orphaned Post within an active session — add as standalone.
 			p.appendToCurrentRequest(node, event.Timestamp)
 		}
+		// If currentSession is nil (post-SessionEnd late arrival), discard
+		// the orphaned Post rather than creating a phantom "(default)" session.
 
 	default:
 		p.appendToCurrentRequest(node, event.Timestamp)
@@ -217,6 +248,37 @@ func buildSummary(event hookevt.HookEvent) string {
 
 	case "SubagentStop":
 		return "Subagent stopped: " + strVal(event.Data, "agent_type")
+
+	case "PermissionRequest":
+		tool := strVal(event.Data, "tool_name")
+		if tool != "" {
+			return "Permission: " + tool
+		}
+		return "Permission requested"
+
+	case "TeammateIdle":
+		name := strVal(event.Data, "teammate_name")
+		if name != "" {
+			return "Idle: " + name
+		}
+		return "Teammate idle"
+
+	case "TaskCompleted":
+		task := strVal(event.Data, "task_name")
+		if task != "" {
+			return "Task done: " + task
+		}
+		return "Task completed"
+
+	case "ConfigChange":
+		key := strVal(event.Data, "key")
+		if key != "" {
+			return "Config: " + key
+		}
+		return "Config changed"
+
+	case "PreCompact":
+		return "Pre-compact"
 
 	default:
 		return event.HookType

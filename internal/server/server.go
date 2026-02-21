@@ -1,11 +1,11 @@
 package server
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"claude-hooks-monitor/internal/hookevt"
@@ -31,7 +31,7 @@ func AuthMiddleware(token string, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !strings.EqualFold(r.Header.Get("Authorization"), expected) {
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte(expected)) != 1 {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
@@ -67,7 +67,7 @@ func HandleHook(mon *monitor.HookMonitor, hookType string) http.HandlerFunc {
 		event := hookevt.HookEvent{
 			HookType:  hookType,
 			Timestamp: time.Now(),
-			Data:      data,
+			Data:      cloneMap(data),
 		}
 		mon.AddEvent(event)
 
@@ -100,6 +100,7 @@ func HandleStats(mon *monitor.HookMonitor) http.HandlerFunc {
 		if err := json.NewEncoder(w).Encode(map[string]interface{}{
 			"stats":       stats,
 			"total_hooks": total,
+			"dropped":     mon.Dropped.Load(),
 		}); err != nil {
 			return
 		}
@@ -128,12 +129,51 @@ func HandleEvents(mon *monitor.HookMonitor) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]interface{}{
-			"events": events,
-			"count":  len(events),
+			"events":  events,
+			"count":   len(events),
+			"dropped": mon.Dropped.Load(),
 		}); err != nil {
 			return
 		}
 	}
+}
+
+// cloneMap creates a shallow copy of a map[string]interface{}.
+// Nested maps and slices are cloned recursively so the returned map shares no
+// mutable state with the original. This enforces the read-only invariant on
+// event.Data — the HTTP handler's parsed JSON is decoupled from the stored event.
+func cloneMap(m map[string]interface{}) map[string]interface{} {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]interface{}, len(m))
+	for k, v := range m {
+		switch val := v.(type) {
+		case map[string]interface{}:
+			out[k] = cloneMap(val)
+		case []interface{}:
+			out[k] = cloneSlice(val)
+		default:
+			out[k] = v // primitives (string, float64, bool, nil) are immutable
+		}
+	}
+	return out
+}
+
+// cloneSlice creates a deep copy of a []interface{} from JSON unmarshal.
+func cloneSlice(s []interface{}) []interface{} {
+	out := make([]interface{}, len(s))
+	for i, v := range s {
+		switch val := v.(type) {
+		case map[string]interface{}:
+			out[i] = cloneMap(val)
+		case []interface{}:
+			out[i] = cloneSlice(val)
+		default:
+			out[i] = v
+		}
+	}
+	return out
 }
 
 // HandleHealth returns a simple health check response.

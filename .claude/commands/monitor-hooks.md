@@ -22,8 +22,8 @@ Run the following script. Use `$ARGUMENTS` for the subcommand passed by the user
 set -euo pipefail
 
 # ── Paths ─────────────────────────────────────────────────────────────
-MONITOR_DIR=$(cd "$CLAUDE_PROJECT_DIR" 2>/dev/null && pwd) || {
-    echo "Error: CLAUDE_PROJECT_DIR does not exist: $CLAUDE_PROJECT_DIR" >&2
+MONITOR_DIR=$(cd "${CLAUDE_PROJECT_DIR:-}" 2>/dev/null && pwd) || {
+    echo "Error: CLAUDE_PROJECT_DIR is not set or does not exist." >&2
     exit 1
 }
 CONF="$MONITOR_DIR/hooks/hook_monitor.conf"
@@ -65,8 +65,13 @@ parse_hooks_section() {
         return 1
     fi
 
-    local in_section=false
+    local in_section=false first_line=true
     while IFS= read -r line || [[ -n "$line" ]]; do
+        # Strip UTF-8 BOM if present on the first line (Windows editors).
+        if $first_line; then
+            line="${line#$'\xef\xbb\xbf'}"
+            first_line=false
+        fi
         # Trim whitespace
         line=$(trim "$line")
         # Skip blanks and comments
@@ -88,6 +93,9 @@ parse_hooks_section() {
         local key val
         key=$(trim "${line%%=*}")
         val=$(trim "${line#*=}")
+        # Strip inline comments: "yes # enable" → "yes"
+        val="${val%%#*}"
+        val=$(trim "$val")
         val="${val,,}"  # lowercase
         HOOK_CFG["$key"]="$val"
         HOOK_CFG_KEYS+=("$key")
@@ -124,17 +132,30 @@ is_monitor_running() {
 
     # Verify the process is actually the monitor (not a recycled PID)
     if [[ -d "/proc/$pid" ]]; then
-        if [[ -f "/proc/$pid/cmdline" ]]; then
-            local cmdline
-            cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null) || true
-            if [[ "$cmdline" == *hook_monitor* || "$cmdline" == *monitor* ]]; then
+        # Prefer /proc/pid/exe (exact binary path) over cmdline substring matching.
+        local exe
+        exe=$(readlink -f "/proc/$pid/exe" 2>/dev/null) || true
+        if [[ -n "$exe" ]]; then
+            local basename_exe
+            basename_exe="${exe##*/}"
+            if [[ "$basename_exe" == "monitor" || "$basename_exe" == "claude-hooks-monitor" ]]; then
                 MONITOR_PID="$pid"
                 return 0
             fi
-            # PID exists but is not the monitor
+            # PID exists but binary name doesn't match
             return 1
         fi
-        # /proc exists but no cmdline — trust kill -0
+        # No /proc/pid/exe — fall back to cmdline check
+        if [[ -f "/proc/$pid/cmdline" ]]; then
+            local cmdline
+            cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null) || true
+            if [[ "$cmdline" == *claude-hooks-monitor* || "$cmdline" == *hook_monitor* ]]; then
+                MONITOR_PID="$pid"
+                return 0
+            fi
+            return 1
+        fi
+        # /proc exists but no exe or cmdline — trust kill -0
         MONITOR_PID="$pid"
         return 0
     fi
@@ -150,6 +171,8 @@ get_port() {
     port=$(<"$PORT_FILE") 2>/dev/null || { echo ""; return 1; }
     port="${port//[[:space:]]/}"
     [[ "$port" =~ ^[0-9]+$ ]] || { echo ""; return 1; }
+    # Validate port is in valid TCP range.
+    (( port >= 1 && port <= 65535 )) || { echo ""; return 1; }
     echo "$port"
 }
 
@@ -179,10 +202,11 @@ show_status() {
 
     echo "Hook Configuration ($CONF):"
     for key in "${HOOK_CFG_KEYS[@]}"; do
-        if [[ "${HOOK_CFG[$key]}" == "yes" ]]; then
-            printf "  %-22s ON\n" "$key"
-        else
+        # Match Go semantics: only "no" disables; anything else (yes, true, 1, empty) = ON.
+        if [[ "${HOOK_CFG[$key]}" == "no" ]]; then
             printf "  %-22s OFF\n" "$key"
+        else
+            printf "  %-22s ON\n" "$key"
         fi
     done
 }
@@ -201,10 +225,10 @@ show_all() {
     local missing_count=0
     for hook in "${VALID_HOOKS[@]}"; do
         if [[ -v "HOOK_CFG[$hook]" ]]; then
-            if [[ "${HOOK_CFG[$hook]}" == "yes" ]]; then
-                printf "  %-22s ON\n" "$hook"
-            else
+            if [[ "${HOOK_CFG[$hook]}" == "no" ]]; then
                 printf "  %-22s OFF\n" "$hook"
+            else
+                printf "  %-22s ON\n" "$hook"
             fi
         else
             printf "  %-22s --    (MISSING from config, defaults to ON)\n" "$hook"
@@ -249,38 +273,56 @@ show_all() {
 # Arguments: sed_expr file
 sed_inplace() {
     local sed_expr="$1" file="$2"
-    local tmp_file="${file}.tmp.$$"
-
-    # Capture original permissions
-    local orig_perms
-    orig_perms=$(stat -c '%a' "$file" 2>/dev/null) || orig_perms="644"
-
-    if ! sed "$sed_expr" "$file" > "$tmp_file" 2>/dev/null; then
-        rm -f "$tmp_file"
-        echo "Error: Failed to process config file: $file" >&2
+    local tmp_file
+    tmp_file=$(mktemp "${file}.tmp.XXXXXX") || {
+        echo "Error: could not create temp file for $file" >&2
         return 1
-    fi
+    }
 
-    # Guard against empty output (disk-full / truncation)
-    if [[ ! -s "$tmp_file" && -s "$file" ]]; then
-        rm -f "$tmp_file"
-        echo "Error: Config write produced empty output — original preserved." >&2
-        return 1
-    fi
+    # Advisory lock prevents concurrent sed_inplace calls from racing
+    # (e.g. two Claude sessions toggling hooks simultaneously).
+    (
+        flock -x 200 2>/dev/null || true  # best-effort — skip if flock unavailable
 
-    chmod "$orig_perms" "$tmp_file" 2>/dev/null || true
+        # Capture original permissions
+        local orig_perms
+        orig_perms=$(stat -c '%a' "$file" 2>/dev/null) || orig_perms="644"
 
-    if ! mv "$tmp_file" "$file"; then
-        rm -f "$tmp_file"
-        echo "Error: Failed to write config file: $file" >&2
-        return 1
-    fi
+        if ! sed "$sed_expr" "$file" > "$tmp_file" 2>/dev/null; then
+            rm -f "$tmp_file"
+            echo "Error: Failed to process config file: $file" >&2
+            return 1
+        fi
+
+        # Guard against empty output (disk-full / truncation)
+        if [[ ! -s "$tmp_file" && -s "$file" ]]; then
+            rm -f "$tmp_file"
+            echo "Error: Config write produced empty output — original preserved." >&2
+            return 1
+        fi
+
+        chmod "$orig_perms" "$tmp_file" 2>/dev/null || true
+
+        if ! mv "$tmp_file" "$file"; then
+            rm -f "$tmp_file"
+            echo "Error: Failed to write config file: $file" >&2
+            return 1
+        fi
+    ) 200>"${file}.lock"
+    local rc=$?
+    rm -f "${file}.lock"
+    return $rc
 }
 
 # Set a single hook value in the config file.
 # Arguments: hook_name value
 set_hook() {
     local hook_name="$1" hook_val="$2"
+    # Guard against regex injection — hook names must be alphanumeric PascalCase.
+    if [[ ! "$hook_name" =~ ^[A-Za-z][A-Za-z0-9]*$ ]]; then
+        echo "Error: Invalid hook name: $hook_name" >&2
+        return 1
+    fi
     if [[ ! -f "$CONF" ]]; then
         echo "Error: Config file not found: $CONF" >&2
         return 1

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"io"
@@ -127,20 +126,29 @@ func sendToMonitor(config Config, hookType string, payload []byte) {
 
 // isHookEnabled reads hook_monitor.conf to check if a hook is enabled.
 // Fail-open: missing file, missing key, or any error → true (enabled).
+// Key matching is case-insensitive to stay consistent with the Bash skill.
+// Inline comments (# ...) are stripped from values before comparison.
+//
+// Uses os.ReadFile for a single-syscall read, which pairs well with the
+// bash skill's atomic temp-file-then-rename write pattern. This also avoids
+// the bufio.Scanner 64KiB line-length limit.
 func isHookEnabled(configPath, hookName string) bool {
-	f, err := os.Open(configPath)
+	raw, err := os.ReadFile(configPath)
 	if err != nil {
-		return true // missing config = all enabled
+		return true // missing or unreadable config = all enabled
 	}
-	defer f.Close()
+
+	content := string(raw)
+
+	// Strip UTF-8 BOM if present (Windows editors add this).
+	content = strings.TrimPrefix(content, "\xef\xbb\xbf")
 
 	inHooksSection := false
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
 
-		// Skip comments and blanks.
-		if line == "" || line[0] == '#' {
+		// Skip blanks and comments.
+		if len(line) == 0 || line[0] == '#' {
 			continue
 		}
 
@@ -163,7 +171,13 @@ func isHookEnabled(configPath, hookName string) bool {
 		key := strings.TrimSpace(parts[0])
 		val := strings.TrimSpace(parts[1])
 
-		if key == hookName {
+		// Strip inline comments: "yes # enable this" → "yes"
+		if idx := strings.Index(val, "#"); idx >= 0 {
+			val = strings.TrimSpace(val[:idx])
+		}
+
+		// Case-insensitive key match (e.g. "pretooluse" matches "PreToolUse").
+		if strings.EqualFold(key, hookName) {
 			return !strings.EqualFold(val, "no")
 		}
 	}
@@ -172,12 +186,16 @@ func isHookEnabled(configPath, hookName string) bool {
 }
 
 // discoverMonitorURL returns the monitor URL.
-// Priority: HOOK_MONITOR_URL env var → .monitor-port file → default.
+// Priority: HOOK_MONITOR_URL env var → .monitor-port file → skip.
 func discoverMonitorURL(hookDir string) string {
 	if urlStr := os.Getenv("HOOK_MONITOR_URL"); urlStr != "" {
 		u, err := url.Parse(urlStr)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-			return "" // invalid URL — fail-safe: skip sending
+		if err != nil {
+			return ""
+		}
+		// Only plain HTTP is supported — the monitor always binds HTTP on loopback.
+		if u.Scheme != "http" {
+			return ""
 		}
 		host := u.Hostname()
 		if host != "localhost" && host != "127.0.0.1" && host != "::1" {
@@ -190,13 +208,14 @@ func discoverMonitorURL(hookDir string) string {
 	data, err := os.ReadFile(portFile)
 	if err == nil {
 		port := strings.TrimSpace(string(data))
-		if _, err := strconv.Atoi(port); err == nil && port != "" {
-			return "http://localhost:" + port
+		portNum, err := strconv.Atoi(port)
+		if err != nil || portNum < 1 || portNum > 65535 {
+			return "" // invalid port — fail safe
 		}
-		return "" // invalid port file content
+		return "http://localhost:" + port
 	}
 
-	return "http://localhost:8080"
+	return "" // No monitor URL found — skip sending rather than risk hitting an unrelated service.
 }
 
 // truncate limits a string to approximately maxLen bytes without

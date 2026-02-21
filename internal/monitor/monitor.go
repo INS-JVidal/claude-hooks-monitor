@@ -14,7 +14,8 @@ import (
 
 const (
 	MaxEvents  = 1000
-	MaxBodyLen = 1 << 20 // 1 MiB — generous limit for hook payloads.
+	trimTarget = MaxEvents - 100 // After trim, keep the last 900 events.
+	MaxBodyLen = 1 << 20         // 1 MiB — generous limit for hook payloads.
 )
 
 // separator is pre-computed once to avoid re-allocating on every event.
@@ -41,13 +42,18 @@ var hookColors = map[string]*color.Color{
 
 var defaultColor = color.New(color.FgWhite)
 
+// logMu serializes terminal output from concurrent logEvent calls
+// to prevent interleaved/garbled log lines in console mode.
+var logMu sync.Mutex
+
 // HookMonitor stores hook events in a bounded ring buffer with thread-safe access.
 type HookMonitor struct {
-	events  []hookevt.HookEvent
-	mu      sync.RWMutex
-	stats   map[string]int
-	eventCh chan hookevt.HookEvent // nil when TUI inactive
-	Dropped atomic.Int64           // Events dropped because TUI channel was full
+	events    []hookevt.HookEvent
+	mu        sync.RWMutex
+	stats     map[string]int
+	eventCh   chan hookevt.HookEvent // nil when TUI inactive
+	chClosed  bool                   // true after CloseChannel(); prevents send-on-closed-channel panic
+	Dropped   atomic.Int64           // Events dropped because TUI channel was full
 }
 
 // NewHookMonitor returns an initialized HookMonitor.
@@ -62,37 +68,56 @@ func NewHookMonitor(eventCh chan hookevt.HookEvent) *HookMonitor {
 
 // AddEvent appends an event to the buffer (thread-safe, bounded).
 // When eventCh is set, events are forwarded to the TUI channel instead of logged.
-// Channel send is inside the lock to guarantee channel order matches insertion order.
+// The channel send happens after the lock is released — the event is already
+// committed to the ring buffer so ordering is determined by append order.
+//
+// The event.Data map is shared by the ring buffer, the TUI channel consumer,
+// and logEvent without synchronization beyond the initial lock. HandleHook
+// deep-copies the parsed JSON before calling AddEvent, so the stored map is
+// decoupled from the HTTP handler's local state.
 func (m *HookMonitor) AddEvent(event hookevt.HookEvent) {
 	m.mu.Lock()
 	m.events = append(m.events, event)
 	// Trim oldest when exceeding max — copy into a fresh slice so the GC
 	// can reclaim the old backing array (avoids the slice-pinning leak).
 	if len(m.events) > MaxEvents {
-		keep := len(m.events) - (MaxEvents - 100)
-		fresh := make([]hookevt.HookEvent, MaxEvents-100, MaxEvents+1)
-		copy(fresh, m.events[keep:])
+		discard := len(m.events) - trimTarget
+		fresh := make([]hookevt.HookEvent, trimTarget, MaxEvents)
+		copy(fresh, m.events[discard:])
 		m.events = fresh
 	}
 	m.stats[event.HookType]++
+	canSend := m.eventCh != nil && !m.chClosed
+	m.mu.Unlock()
 
-	if m.eventCh != nil {
+	if canSend {
 		// Non-blocking send — drop if TUI can't keep up.
 		select {
 		case m.eventCh <- event:
 		default:
 			m.Dropped.Add(1)
 		}
-	}
-	m.mu.Unlock()
-
-	if m.eventCh == nil {
+	} else if m.eventCh == nil {
 		logEvent(event)
 	}
+	// If chClosed && eventCh != nil: channel is closed, skip both send and log.
+}
+
+// CloseChannel marks the TUI event channel as closed and closes it.
+// Must be called instead of close(eventCh) directly to prevent AddEvent
+// from sending on a closed channel (which panics in Go).
+func (m *HookMonitor) CloseChannel() {
+	m.mu.Lock()
+	if m.eventCh != nil && !m.chClosed {
+		m.chClosed = true
+		close(m.eventCh)
+	}
+	m.mu.Unlock()
 }
 
 // logEvent prints a colorized event to the console.
-// Called outside the lock — builds the full output first, then writes once.
+// Builds the full output into a buffer, then writes atomically under logMu
+// to prevent interleaving from concurrent HTTP handler goroutines.
 func logEvent(event hookevt.HookEvent) {
 	printer := hookColor(event.HookType)
 
@@ -112,7 +137,9 @@ func logEvent(event hookevt.HookEvent) {
 	buf.WriteString(separator)
 	buf.WriteByte('\n')
 
+	logMu.Lock()
 	fmt.Print(buf.String())
+	logMu.Unlock()
 }
 
 // GetStats returns a copy of the stats map (thread-safe).

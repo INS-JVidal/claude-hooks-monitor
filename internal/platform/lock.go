@@ -31,8 +31,9 @@ func ShowRunningInstance(lockPath, portFilePath string) {
 	if portBytes, err := os.ReadFile(portFilePath); err == nil {
 		port := strings.TrimSpace(string(portBytes))
 
-		// Validate port is numeric before using in HTTP request.
-		if _, err := strconv.Atoi(port); err != nil {
+		// Validate port is numeric and in valid range before using in HTTP request.
+		portNum, err := strconv.Atoi(port)
+		if err != nil || portNum < 1 || portNum > 65535 {
 			info.Println("  Port: invalid port file")
 			return
 		}

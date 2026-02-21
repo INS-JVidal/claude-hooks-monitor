@@ -201,7 +201,7 @@ func main() {
 func printBanner(port, numHooks int) {
 	banner := color.New(color.FgHiGreen, color.Bold)
 	banner.Println("╔══════════════════════════════════════════════════════════════╗")
-	banner.Println("║           Claude Code Hooks Monitor v0.4.2                  ║")
+	banner.Println("║           Claude Code Hooks Monitor v0.4.3                  ║")
 	banner.Println("╚══════════════════════════════════════════════════════════════╝")
 	fmt.Println()
 	color.New(color.FgHiCyan).Printf("  Registered %d hook endpoints\n", numHooks)

@@ -1,4 +1,4 @@
-package main
+package monitor
 
 import (
 	"encoding/json"
@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	maxEvents  = 1000
-	maxBodyLen = 1 << 20 // 1 MiB — generous limit for hook payloads.
+	MaxEvents  = 1000
+	MaxBodyLen = 1 << 20 // 1 MiB — generous limit for hook payloads.
 )
 
 // separator is pre-computed once to avoid re-allocating on every event.
@@ -68,9 +68,9 @@ func (m *HookMonitor) AddEvent(event hookevt.HookEvent) {
 	m.events = append(m.events, event)
 	// Trim oldest when exceeding max — copy into a fresh slice so the GC
 	// can reclaim the old backing array (avoids the slice-pinning leak).
-	if len(m.events) > maxEvents {
-		keep := len(m.events) - (maxEvents - 100)
-		fresh := make([]hookevt.HookEvent, maxEvents-100, maxEvents+1)
+	if len(m.events) > MaxEvents {
+		keep := len(m.events) - (MaxEvents - 100)
+		fresh := make([]hookevt.HookEvent, MaxEvents-100, MaxEvents+1)
 		copy(fresh, m.events[keep:])
 		m.events = fresh
 	}

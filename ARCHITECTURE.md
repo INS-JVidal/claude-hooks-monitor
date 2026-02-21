@@ -23,7 +23,7 @@
                       │ HTTP POST (only if enabled)
                       ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│              Go REST API Server (main.go)                       │
+│              Go REST API Server (cmd/monitor)                    │
 │  Ring buffer (max 1000 events) + stats counters                │
 │  Thread-safe via sync.RWMutex                                  │
 │  Colorized console output per hook type                        │
@@ -63,7 +63,7 @@ Event-specific fields are merged alongside (e.g., `tool_name`, `tool_input` for 
 
 ## Component Details
 
-### Go Server (main.go)
+### Go Server (cmd/monitor/main.go)
 
 **Data structures:**
 

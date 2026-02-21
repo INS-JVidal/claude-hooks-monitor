@@ -1,6 +1,9 @@
 # Binaries
 bin/
 hooks/hook-client
+claude-hooks-monitor
+/monitor
+/hook-client
 *.exe
 *.dll
 *.so

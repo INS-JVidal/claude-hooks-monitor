@@ -1,18 +1,17 @@
-//go:build windows
+//go:build !windows
 
-package main
+package platform
 
 import (
 	"fmt"
 	"os"
-
-	"golang.org/x/sys/windows"
+	"syscall"
 )
 
-// acquireLock tries to obtain an exclusive lock on a lock file using
-// Windows LockFileEx. If another instance holds the lock, it reads the
-// existing port file and prints info about the running instance, then exits.
-func acquireLock(lockPath, portFilePath string) *os.File {
+// acquireLock tries to obtain an exclusive flock on a lock file.
+// If another instance holds the lock, it reads the existing port file
+// and prints info about the running instance, then exits.
+func AcquireLock(lockPath, portFilePath string) *os.File {
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error opening lock file: %v\n", err)
@@ -20,19 +19,11 @@ func acquireLock(lockPath, portFilePath string) *os.File {
 	}
 
 	// Try non-blocking exclusive lock.
-	ol := new(windows.Overlapped)
-	err = windows.LockFileEx(
-		windows.Handle(f.Fd()),
-		windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY,
-		0,        // reserved
-		1,        // lock 1 byte
-		0,        // high
-		ol,
-	)
+	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if err != nil {
 		// Lock held by another process — read its info.
 		f.Close()
-		showRunningInstance(lockPath, portFilePath)
+		ShowRunningInstance(lockPath, portFilePath)
 		os.Exit(1)
 	}
 

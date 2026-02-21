@@ -1,4 +1,4 @@
-package main
+package platform
 
 import (
 	"encoding/json"
@@ -14,7 +14,7 @@ import (
 
 // showRunningInstance reads the port and PID files and prints info about
 // the already-running monitor instance.
-func showRunningInstance(lockPath, portFilePath string) {
+func ShowRunningInstance(lockPath, portFilePath string) {
 	warn := color.New(color.FgYellow, color.Bold)
 	info := color.New(color.FgCyan)
 

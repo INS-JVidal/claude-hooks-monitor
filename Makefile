@@ -33,7 +33,7 @@ deps: ## Install Go deps
 
 build: ## Build monitor server and hook client
 	@mkdir -p bin
-	$(GO) build -ldflags="-s -w" -o $(BINARY) .
+	$(GO) build -ldflags="-s -w" -o $(BINARY) ./cmd/monitor
 	$(GO) build -ldflags="-s -w" -o $(HOOK_CLIENT) ./cmd/hook-client
 	@echo "Built $(BINARY) and $(HOOK_CLIENT)"
 
@@ -43,7 +43,7 @@ build-hook-client: ## Build only the hook client binary
 
 run: ## Run server (foreground, console output)
 	@echo "Starting monitor on port $(PORT)..."
-	PORT=$(PORT) $(GO) run .
+	PORT=$(PORT) $(GO) run ./cmd/monitor
 
 run-ui: build ## Run server with interactive tree UI
 	PORT=$(PORT) ./$(BINARY) --ui
@@ -53,7 +53,7 @@ ifeq ($(OS),Windows_NT)
 	@echo "run-background is not supported on Windows. Use 'make run' in a separate terminal."
 else
 	@mkdir -p bin
-	$(GO) build -ldflags="-s -w" -o $(BINARY) .
+	$(GO) build -ldflags="-s -w" -o $(BINARY) ./cmd/monitor
 	PORT=$(PORT) nohup ./$(BINARY) > monitor.log 2>&1 &
 	@sleep 1
 	@echo "Server started in background (PID $$(lsof -ti:$(PORT) 2>/dev/null || echo '?'))"

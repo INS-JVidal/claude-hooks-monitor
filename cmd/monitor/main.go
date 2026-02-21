@@ -14,7 +14,10 @@ import (
 	"time"
 
 	"claude-hooks-monitor/internal/hookevt"
-	"claude-hooks-monitor/tui"
+	"claude-hooks-monitor/internal/monitor"
+	"claude-hooks-monitor/internal/platform"
+	"claude-hooks-monitor/internal/server"
+	"claude-hooks-monitor/internal/tui"
 
 	"github.com/fatih/color"
 )
@@ -55,7 +58,7 @@ func main() {
 	lockFile := strings.TrimSuffix(portFile, ".monitor-port") + ".monitor-lock"
 
 	// Single-instance guard.
-	lockFd := acquireLock(lockFile, portFile)
+	lockFd := platform.AcquireLock(lockFile, portFile)
 
 	// Remove stale port file from a previous crash. Lock acquisition proves
 	// we're the only instance, so any existing port file is stale.
@@ -66,16 +69,16 @@ func main() {
 	if *uiMode {
 		eventCh = make(chan hookevt.HookEvent, 256)
 	}
-	monitor := NewHookMonitor(eventCh)
+	mon := monitor.NewHookMonitor(eventCh)
 
 	// Register HTTP handlers on a dedicated mux (avoids polluting DefaultServeMux).
 	mux := http.NewServeMux()
 	for _, ht := range hookTypes {
-		mux.HandleFunc("/hook/"+ht, handleHook(monitor, ht))
+		mux.HandleFunc("/hook/"+ht, server.HandleHook(mon, ht))
 	}
-	mux.HandleFunc("/stats", handleStats(monitor))
-	mux.HandleFunc("/events", handleEvents(monitor))
-	mux.HandleFunc("/health", handleHealth)
+	mux.HandleFunc("/stats", server.HandleStats(mon))
+	mux.HandleFunc("/events", server.HandleEvents(mon))
+	mux.HandleFunc("/health", server.HandleHealth)
 
 	// Listen on requested port, fall back to OS-assigned.
 	port := os.Getenv("PORT")
@@ -109,13 +112,13 @@ func main() {
 
 	// Wrap mux with security headers; optionally add bearer token auth.
 	var handler http.Handler = mux
-	handler = securityHeaders(handler)
+	handler = server.SecurityHeaders(handler)
 	token := os.Getenv("HOOK_MONITOR_TOKEN")
 	if token != "" {
-		handler = authMiddleware(token, handler)
+		handler = server.AuthMiddleware(token, handler)
 	}
 
-	server := &http.Server{
+	srv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
@@ -129,7 +132,7 @@ func main() {
 		cancel()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
-		server.Shutdown(shutdownCtx)
+		srv.Shutdown(shutdownCtx)
 		os.Remove(portFile)
 		lockFd.Close()
 		os.Remove(lockFile)
@@ -140,25 +143,25 @@ func main() {
 	// (unblocks server.Serve in console mode).
 	go func() {
 		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, shutdownSignals...)
+		signal.Notify(sig, platform.ShutdownSignals...)
 		<-sig
 		cancel()
 		sigCtx, sigCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer sigCancel()
-		server.Shutdown(sigCtx)
+		srv.Shutdown(sigCtx)
 	}()
 
 	if *uiMode {
-		go server.Serve(ln)
+		go srv.Serve(ln)
 
 		// Run TUI (blocks until user quits or ctx is cancelled).
-		if err := tui.Run(ctx, eventCh, actualPort, &monitor.Dropped); err != nil {
+		if err := tui.Run(ctx, eventCh, actualPort, &mon.Dropped); err != nil {
 			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 		}
 	} else {
 		printBanner(actualPort, len(hookTypes))
 		// Blocks until server.Shutdown is called (from signal handler).
-		if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			fmt.Fprintf(os.Stderr, "Error starting server: %v\n", err)
 		}
 	}

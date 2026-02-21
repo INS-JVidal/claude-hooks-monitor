@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"encoding/json"
@@ -9,10 +9,11 @@ import (
 	"time"
 
 	"claude-hooks-monitor/internal/hookevt"
+	"claude-hooks-monitor/internal/monitor"
 )
 
-// securityHeaders adds standard security response headers to every response.
-func securityHeaders(next http.Handler) http.Handler {
+// SecurityHeaders adds standard security response headers to every response.
+func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
@@ -20,9 +21,9 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// authMiddleware enforces bearer token authentication when HOOK_MONITOR_TOKEN
+// AuthMiddleware enforces bearer token authentication when HOOK_MONITOR_TOKEN
 // is set. The /health endpoint is exempt so monitoring tools can check liveness.
-func authMiddleware(token string, next http.Handler) http.Handler {
+func AuthMiddleware(token string, next http.Handler) http.Handler {
 	expected := "Bearer " + token
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Allow /health without auth for liveness probes.
@@ -38,8 +39,8 @@ func authMiddleware(token string, next http.Handler) http.Handler {
 	})
 }
 
-// handleHook returns an HTTP handler for a specific hook type.
-func handleHook(monitor *HookMonitor, hookType string) http.HandlerFunc {
+// HandleHook returns an HTTP handler for a specific hook type.
+func HandleHook(mon *monitor.HookMonitor, hookType string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
@@ -47,7 +48,7 @@ func handleHook(monitor *HookMonitor, hookType string) http.HandlerFunc {
 		}
 		defer r.Body.Close()
 
-		body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyLen))
+		body, err := io.ReadAll(io.LimitReader(r.Body, monitor.MaxBodyLen))
 		if err != nil {
 			http.Error(w, `{"error":"failed to read body"}`, http.StatusBadRequest)
 			return
@@ -68,7 +69,7 @@ func handleHook(monitor *HookMonitor, hookType string) http.HandlerFunc {
 			Timestamp: time.Now(),
 			Data:      data,
 		}
-		monitor.AddEvent(event)
+		mon.AddEvent(event)
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]interface{}{
@@ -81,15 +82,15 @@ func handleHook(monitor *HookMonitor, hookType string) http.HandlerFunc {
 	}
 }
 
-// handleStats returns aggregate hook statistics.
-func handleStats(monitor *HookMonitor) http.HandlerFunc {
+// HandleStats returns aggregate hook statistics.
+func HandleStats(mon *monitor.HookMonitor) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 			return
 		}
 
-		stats := monitor.GetStats()
+		stats := mon.GetStats()
 		total := 0
 		for _, v := range stats {
 			total += v
@@ -105,8 +106,8 @@ func handleStats(monitor *HookMonitor) http.HandlerFunc {
 	}
 }
 
-// handleEvents returns the last N events.
-func handleEvents(monitor *HookMonitor) http.HandlerFunc {
+// HandleEvents returns the last N events.
+func HandleEvents(mon *monitor.HookMonitor) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
@@ -119,11 +120,11 @@ func handleEvents(monitor *HookMonitor) http.HandlerFunc {
 				limit = n
 			}
 		}
-		if limit > maxEvents {
-			limit = maxEvents
+		if limit > monitor.MaxEvents {
+			limit = monitor.MaxEvents
 		}
 
-		events := monitor.GetEvents(limit)
+		events := mon.GetEvents(limit)
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]interface{}{
@@ -135,8 +136,8 @@ func handleEvents(monitor *HookMonitor) http.HandlerFunc {
 	}
 }
 
-// handleHealth returns a simple health check response.
-func handleHealth(w http.ResponseWriter, r *http.Request) {
+// HandleHealth returns a simple health check response.
+func HandleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return

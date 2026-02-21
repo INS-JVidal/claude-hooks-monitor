@@ -353,22 +353,23 @@ claude-hooks-monitor/
 │   │   └── monitor-hooks.md      # /monitor-hooks slash command for Claude Code
 │   └── settings.json            # Hook config + permissions
 ├── cmd/
+│   ├── monitor/main.go          # Entrypoint — flag parsing, HTTP setup, mode dispatch
 │   └── hook-client/main.go      # Go hook client — single-shot HTTP forwarder
 ├── internal/
-│   └── hookevt/hookevt.go       # Shared HookEvent type (used by monitor + TUI)
-├── tui/
-│   ├── model.go                 # Bubble Tea model, key handling, viewport
-│   ├── tree.go                  # Tree data structures (Session/Request/EventNode)
-│   ├── processor.go             # Event → tree builder with Pre/Post pairing
-│   └── styles.go                # Lipgloss styles and row rendering
-├── main.go                      # Entrypoint — flag parsing, HTTP setup, mode dispatch
-├── monitor.go                   # HookMonitor — event buffer, stats, TUI channel
-├── server.go                    # HTTP handlers (/hook, /stats, /events, /health)
-├── lock_unix.go                 # Unix file locking (flock)
-├── lock_windows.go              # Windows file locking (LockFileEx)
-├── lock_common.go               # Shared lock diagnostics (showRunningInstance)
-├── signals_unix.go              # Unix shutdown signals (SIGINT + SIGTERM)
-├── signals_windows.go           # Windows shutdown signals (SIGINT only)
+│   ├── hookevt/hookevt.go       # Shared HookEvent type (used by monitor + TUI)
+│   ├── monitor/monitor.go       # HookMonitor — event buffer, stats, TUI channel
+│   ├── server/server.go         # HTTP handlers (/hook, /stats, /events, /health)
+│   ├── platform/
+│   │   ├── lock.go              # Shared lock diagnostics (ShowRunningInstance)
+│   │   ├── lock_unix.go         # Unix file locking (flock)
+│   │   ├── lock_windows.go      # Windows file locking (LockFileEx)
+│   │   ├── signals_unix.go      # Unix shutdown signals (SIGINT + SIGTERM)
+│   │   └── signals_windows.go   # Windows shutdown signals (SIGINT only)
+│   └── tui/
+│       ├── model.go             # Bubble Tea model, key handling, viewport
+│       ├── tree.go              # Tree data structures (Session/Request/EventNode)
+│       ├── processor.go         # Event → tree builder with Pre/Post pairing
+│       └── styles.go            # Lipgloss styles and row rendering
 ├── hooks/
 │   ├── hook-client[.exe]        # Compiled Go hook client binary
 │   ├── hook_monitor.py          # Alternative Python hook script

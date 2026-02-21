@@ -4,7 +4,7 @@
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
-║           Claude Code Hooks Monitor v2.2                    ║
+║           Claude Code Hooks Monitor v0.4.2                    ║
 ╚══════════════════════════════════════════════════════════════╝
 
   Registered 15 hook endpoints

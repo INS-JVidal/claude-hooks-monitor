@@ -1,0 +1,61 @@
+version: 2
+
+builds:
+  - id: monitor
+    main: ./cmd/monitor
+    binary: claude-hooks-monitor
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+      - "386"
+    ignore:
+      - goos: darwin
+        goarch: "386"
+    ldflags:
+      - -s -w
+
+  - id: hook-client
+    main: ./cmd/hook-client
+    binary: hook-client
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+      - "386"
+    ignore:
+      - goos: darwin
+        goarch: "386"
+    ldflags:
+      - -s -w
+
+archives:
+  - id: default
+    builds:
+      - monitor
+      - hook-client
+    format_overrides:
+      - goos: windows
+        format: zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"

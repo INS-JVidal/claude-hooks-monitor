@@ -23,42 +23,57 @@ A real-time monitoring and logging system for Claude Code CLI hooks. Watch every
 
 ## Prerequisites
 
-- **Go** 1.24+ — [golang.org/dl](https://go.dev/dl/)
-- **Python** 3.11+
-- **uv** — [docs.astral.sh/uv](https://docs.astral.sh/uv/)
+- **Go** 1.21+ — [go.dev/dl](https://go.dev/dl/)
+- **Git** — [git-scm.com](https://git-scm.com/)
+- **Make** — included in build-essential
 - **Claude Code CLI** — latest version
+- *Optional:* Python 3.11+, uv, jq, curl (for test suite and alternative hook script)
+
+## Installation
+
+**One-line install** (clones, builds, and verifies):
+
+```bash
+curl -sSL https://raw.githubusercontent.com/INS-JVidal/claude-hooks-monitor/main/install.sh | bash
+```
+
+Custom install location:
+
+```bash
+INSTALL_DIR=~/projects/hooks-monitor \
+  curl -sSL https://raw.githubusercontent.com/INS-JVidal/claude-hooks-monitor/main/install.sh | bash
+```
+
+**Manual install:**
+
+```bash
+git clone https://github.com/INS-JVidal/claude-hooks-monitor.git
+cd claude-hooks-monitor
+make build
+```
+
+**System dependencies (Ubuntu/Debian only):**
+
+If you need Go, Python, uv, and other tools installed:
+
+```bash
+# Run from inside the repo, or standalone:
+bash setup.sh
+```
+
+> For detailed per-platform instructions, see [INSTALLME.md](INSTALLME.md).
 
 ## Quick Start
 
-**Step 1: Install dependencies** (~1 minute)
-
 ```bash
+# Terminal 1: start the monitor
 cd claude-hooks-monitor
-make deps
-```
+make run            # console mode
+# Or: make run-ui  # interactive tree UI
 
-**Step 2: Start the monitor** (~30 seconds)
-
-```bash
-# Terminal 1: run the server (console mode)
-make run
-
-# Or: interactive tree UI
-make run-ui
-```
-
-**Step 3: Test it** (~1 minute)
-
-```bash
-# Terminal 2: run the test suite
-make test
-```
-
-Or use it with Claude Code directly:
-
-```bash
-# Terminal 2: start Claude in this project directory
-claude
+# Terminal 2: test it
+make test           # run the 3-phase test suite
+# Or: claude        # start Claude in this project — hooks fire automatically
 ```
 
 ## API Endpoints
@@ -106,20 +121,81 @@ This project is a **passive monitor** — it produces no stdout. But understandi
 | PreToolUse `updatedInput` | Modifies tool input before execution. |
 | SessionStart stdout | Added to Claude's context. |
 
-## Usage Examples
+## Configuring Hooks
+
+### Using with this project
+
+No configuration needed — just `make run` in one terminal and `claude` in another. The included `.claude/settings.json` wires all 15 hook types to the monitor automatically.
+
+### Using with your own project
+
+To monitor hooks while working in a different project:
+
+1. Generate the hooks config with absolute paths:
+   ```bash
+   cd ~/claude-hooks-monitor
+   make show-hooks-config
+   ```
+2. Copy the JSON output into your project's `.claude/settings.json`.
+3. Start the monitor (`make run`) and then `claude` in your project.
+
+> See [INSTALLME.md](INSTALLME.md#configuring-claude-code-hooks) for a full walkthrough and example JSON.
+
+### Hook Toggle (hooks/hook_monitor.conf)
+
+Toggle individual hooks on/off without editing settings.json:
+
+```ini
+[hooks]
+SessionStart = yes
+PreToolUse = no       # disable noisy tool hooks
+PostToolUse = no
+PostToolUseFailure = yes
+# ... etc
+```
+
+Changes take effect immediately. View current state: `make show-config`. Reset all: `make reset-config`.
+
+## Usage Guide
+
+### Starting the monitor
 
 ```bash
-# Start server on custom port
+make run            # console mode (colorized output)
+make run-ui         # interactive tree UI
+make run-background # background mode (logs to monitor.log)
+```
+
+### Custom port
+
+```bash
 PORT=9000 make run
+PORT=9000 make run-ui
+```
 
-# Send a single test hook manually
-make send-test-hook
+### Running with Claude Code
 
-# Check statistics
-make stats
+```bash
+# Terminal 1
+make run
 
-# View last 5 events
-curl http://localhost:8080/events?limit=5 | python3 -m json.tool
+# Terminal 2 — in this project or your own (if hooks are configured)
+claude
+```
+
+### Checking statistics
+
+```bash
+make stats                              # aggregate hook counts
+make check                              # is the server running?
+curl http://localhost:8080/events?limit=5 | python3 -m json.tool  # last 5 events
+```
+
+### Manual testing
+
+```bash
+make send-test-hook   # send a single PreToolUse event
+make test             # full 3-phase test suite
 ```
 
 ## Tree UI Mode
@@ -182,21 +258,6 @@ make test
 | `HOOK_MONITOR_URL` | http://localhost:8080 | Server URL (for Python script) |
 | `HOOK_TIMEOUT` | 2 | HTTP timeout in seconds |
 
-### Hook Toggle (hooks/hook_monitor.conf)
-
-Toggle individual hooks on/off without editing settings.json:
-
-```ini
-[hooks]
-SessionStart = yes
-PreToolUse = no       # disable noisy tool hooks
-PostToolUse = no
-PostToolUseFailure = yes
-# ... etc
-```
-
-Changes take effect immediately. View current state: `make show-config`. Reset all: `make reset-config`.
-
 ## Troubleshooting
 
 **Server won't start:**
@@ -257,8 +318,11 @@ claude-hooks-monitor/
 ├── plans/                       # Development planning documents
 ├── go.mod / go.sum              # Go dependencies (bubbletea, lipgloss, fatih/color)
 ├── Makefile                     # Build automation (run, run-ui, test, etc.)
+├── install.sh                   # Curl-pipe-bash installer
+├── setup.sh                     # Ubuntu/Debian system deps installer
 ├── test-hooks.sh                # Test suite (3 phases)
 ├── README.md                    # This file
+├── INSTALLME.md                 # Detailed installation guide
 ├── EXAMPLES.md                  # Output examples
 └── ARCHITECTURE.md              # Architecture deep-dive
 ```

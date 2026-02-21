@@ -4,12 +4,12 @@
 BINARY      := bin/monitor
 HOOK_CLIENT := hooks/hook-client
 PORT        ?= 8080
-GO          := /usr/local/go/bin/go
+GO          := $(shell which go 2>/dev/null || echo /usr/local/go/bin/go)
 HOOK_DIR    := hooks
 CONF        := $(HOOK_DIR)/hook_monitor.conf
 
 .PHONY: help deps build build-hook-client run run-ui run-background test test-api send-test-hook \
-        clean install check stats show-config reset-config
+        clean install check stats show-config reset-config show-hooks-config
 
 help: ## Show all targets with descriptions
 	@echo ""
@@ -104,3 +104,26 @@ show-config: ## Display current hook toggle state
 reset-config: ## Reset hook config to all-enabled defaults
 	@sed -i 's/= no/= yes/g' $(CONF)
 	@echo "All hooks reset to enabled."
+
+show-hooks-config: ## Print hooks JSON snippet for .claude/settings.json
+	@HOOK_CLIENT="$(CURDIR)/hooks/hook-client"; \
+	echo ""; \
+	echo "  Add this to your project's .claude/settings.json to monitor hooks:"; \
+	echo "  (hook-client path: $$HOOK_CLIENT)"; \
+	echo ""; \
+	echo '  "hooks": {'; \
+	first=true; \
+	for event in SessionStart SessionEnd UserPromptSubmit PreToolUse PostToolUse PostToolUseFailure \
+	             Notification PermissionRequest Stop SubagentStart SubagentStop TeammateIdle \
+	             TaskCompleted ConfigChange PreCompact; do \
+		if [ "$$first" = true ]; then first=false; else echo ','; fi; \
+		case "$$event" in \
+			PreToolUse|PostToolUse|PostToolUseFailure) \
+				printf '    "%s": [{"matcher": "*", "hooks": [{"type": "command", "command": "\"%s\""}]}]' "$$event" "$$HOOK_CLIENT" ;; \
+			*) \
+				printf '    "%s": [{"hooks": [{"type": "command", "command": "\"%s\""}]}]' "$$event" "$$HOOK_CLIENT" ;; \
+		esac; \
+	done; \
+	echo ""; \
+	echo '  }'; \
+	echo ""

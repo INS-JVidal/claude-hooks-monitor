@@ -42,6 +42,23 @@ var (
 	selectedStyle = lipgloss.NewStyle().
 			Background(lipgloss.Color("237")).
 			Bold(true)
+
+	// Detail pane styles.
+	dividerStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("237"))
+
+	paneTitleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("255"))
+
+	paneSectionStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("239"))
+
+	paneLabelStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244"))
+
+	paneValueStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("252"))
 )
 
 // hookStyle returns the lipgloss style for a given hook type.

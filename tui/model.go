@@ -46,6 +46,11 @@ type Model struct {
 	totalEvents int
 	autoScroll  bool
 	dropped     *atomic.Int64 // Shared counter — events dropped because channel was full
+
+	// Detail pane state.
+	detailOpen   bool
+	detailLines  []string
+	detailScroll int
 }
 
 // NewModel creates a new TUI model.
@@ -80,6 +85,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = len(m.rows) - 1
 		}
 
+		// Refresh detail pane if open (e.g. PostPair arrived for a Pre event).
+		if m.detailOpen && m.cursor >= 0 && m.cursor < len(m.rows) {
+			m.detailLines = formatNodeDetail(m.rows[m.cursor].NodeRef, m.width)
+			if m.detailScroll >= len(m.detailLines) {
+				m.detailScroll = max(0, len(m.detailLines)-1)
+			}
+		}
+
 		return m, waitForEvent(m.ctx, m.eventCh)
 
 	case tea.WindowSizeMsg:
@@ -97,24 +110,67 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 
-	case "up", "k":
-		if m.cursor > 0 {
-			m.cursor--
+	case "i":
+		if m.detailOpen {
+			m.detailOpen = false
+			m.detailLines = nil
+			m.detailScroll = 0
+			// Restore auto-scroll if cursor is at the bottom.
+			if len(m.rows) > 0 && m.cursor == len(m.rows)-1 {
+				m.autoScroll = true
+			}
+		} else if m.cursor >= 0 && m.cursor < len(m.rows) {
+			m.detailOpen = true
+			m.detailScroll = 0
+			m.detailLines = formatNodeDetail(m.rows[m.cursor].NodeRef, m.width)
 			m.autoScroll = false
 		}
 		return m, nil
 
-	case "down", "j":
-		if m.cursor < len(m.rows)-1 {
-			m.cursor++
-			// Re-enable auto-scroll if user reaches the bottom.
-			if m.cursor == len(m.rows)-1 {
+	case "esc":
+		if m.detailOpen {
+			m.detailOpen = false
+			m.detailLines = nil
+			m.detailScroll = 0
+			if len(m.rows) > 0 && m.cursor == len(m.rows)-1 {
 				m.autoScroll = true
+			}
+			return m, nil
+		}
+		return m, nil
+
+	case "up", "k":
+		if m.detailOpen {
+			if m.detailScroll > 0 {
+				m.detailScroll--
+			}
+		} else {
+			if m.cursor > 0 {
+				m.cursor--
+				m.autoScroll = false
+			}
+		}
+		return m, nil
+
+	case "down", "j":
+		if m.detailOpen {
+			m.detailScroll++
+			// Clamped in View() where paneHeight is known.
+		} else {
+			if m.cursor < len(m.rows)-1 {
+				m.cursor++
+				// Re-enable auto-scroll if user reaches the bottom.
+				if m.cursor == len(m.rows)-1 {
+					m.autoScroll = true
+				}
 			}
 		}
 		return m, nil
 
 	case "right", "l", "enter":
+		if m.detailOpen {
+			return m, nil
+		}
 		if m.cursor >= 0 && m.cursor < len(m.rows) {
 			row := m.rows[m.cursor]
 			if row.HasChildren {
@@ -125,6 +181,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "left", "h":
+		if m.detailOpen {
+			return m, nil
+		}
 		if m.cursor >= 0 && m.cursor < len(m.rows) {
 			row := m.rows[m.cursor]
 			if row.HasChildren && row.Expanded {
@@ -135,6 +194,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case " ":
+		if m.detailOpen {
+			return m, nil
+		}
 		// Toggle expand/collapse.
 		if m.cursor >= 0 && m.cursor < len(m.rows) {
 			row := m.rows[m.cursor]
@@ -146,6 +208,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "G":
+		if m.detailOpen {
+			return m, nil
+		}
 		// Jump to bottom, re-enable auto-scroll.
 		if len(m.rows) > 0 {
 			m.cursor = len(m.rows) - 1
@@ -154,6 +219,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "g":
+		if m.detailOpen {
+			return m, nil
+		}
 		// Jump to top.
 		m.cursor = 0
 		m.autoScroll = false
@@ -178,19 +246,37 @@ func (m Model) View() string {
 	}
 	header := headerStyle.Render(headerText)
 
-	// Footer.
-	footer := footerStyle.Render(
-		"q: quit  j/k: navigate  h/l: collapse/expand  space: toggle  g/G: top/bottom",
-	)
+	// Footer — context-sensitive.
+	footerText := "q: quit  j/k: navigate  h/l: collapse/expand  space: toggle  g/G: top/bottom  i: detail"
+	if m.detailOpen {
+		footerText = "esc/i: close  j/k: scroll detail"
+	}
+	footer := footerStyle.Render(footerText)
 
 	// Available height for the tree viewport.
 	viewHeight := m.height - 3 // header + footer + breathing room
-
 	if viewHeight < 1 {
 		viewHeight = 1
 	}
 
-	// Render visible rows with scrolling.
+	// Calculate detail pane height if open.
+	paneHeight := 0
+	if m.detailOpen && len(m.detailLines) > 0 {
+		paneHeight = len(m.detailLines)
+		halfAvail := viewHeight / 2
+		if paneHeight > halfAvail {
+			paneHeight = halfAvail
+		}
+		if paneHeight < 3 {
+			paneHeight = 3
+		}
+		viewHeight = viewHeight - paneHeight - 1 // -1 for divider.
+		if viewHeight < 1 {
+			viewHeight = 1
+		}
+	}
+
+	// Render visible tree rows with scrolling.
 	var b strings.Builder
 
 	if len(m.rows) == 0 {
@@ -215,9 +301,16 @@ func (m Model) View() string {
 	}
 
 	// Pad remaining lines to fill viewport (prevents flicker).
-	lines := strings.Count(b.String(), "\n") + 1
-	for i := lines; i < viewHeight; i++ {
+	lineCount := strings.Count(b.String(), "\n") + 1
+	for i := lineCount; i < viewHeight; i++ {
 		b.WriteByte('\n')
+	}
+
+	// Append detail pane if open.
+	if m.detailOpen && paneHeight > 0 {
+		divider := dividerStyle.Render(strings.Repeat("─", m.width))
+		pane := renderDetailPane(m.detailLines, m.detailScroll, paneHeight, m.width)
+		return header + "\n" + b.String() + "\n" + divider + "\n" + pane + "\n" + footer
 	}
 
 	return header + "\n" + b.String() + "\n" + footer

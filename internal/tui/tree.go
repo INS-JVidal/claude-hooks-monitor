@@ -31,6 +31,7 @@ type EventNode struct {
 	Data      map[string]interface{}
 	PostPair  *EventNode // PreToolUse links to its PostToolUse/Failure
 	Expanded  bool
+	Evicted   bool // True if this Pre was evicted from pendingPre (Post will never arrive)
 }
 
 // FlatRow is one visible line in the viewport.
@@ -86,9 +87,13 @@ func FlattenTree(sessions []*Session) []FlatRow {
 				continue
 			}
 			for _, ev := range req.Events {
+				label := ev.Timestamp.Format("15:04:05") + " " + ev.Summary
+				if ev.Evicted {
+					label += " (evicted)"
+				}
 				rows = append(rows, FlatRow{
 					Depth:       2,
-					Label:       ev.Timestamp.Format("15:04:05") + " " + ev.Summary,
+					Label:       label,
 					HookType:    ev.HookType,
 					NodeRef:     ev,
 					HasChildren: ev.PostPair != nil,

@@ -141,8 +141,11 @@ func (p *EventProcessor) handleGenericEvent(event hookevt.HookEvent) {
 	case "PreToolUse":
 		queue := p.pendingPre[pairKey]
 		// Cap per-key queue to prevent unbounded growth if Posts never arrive
-		// (e.g. crashed tool calls). Oldest unmatched Pre is evicted.
+		// (e.g. crashed tool calls). Oldest unmatched Pre is evicted and marked
+		// so the TUI doesn't display it as permanently "pending".
 		if len(queue) >= maxPendingPerKey {
+			evicted := queue[0]
+			evicted.Evicted = true
 			queue = queue[1:]
 		}
 		p.pendingPre[pairKey] = append(queue, node)

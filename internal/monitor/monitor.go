@@ -68,8 +68,12 @@ func NewHookMonitor(eventCh chan hookevt.HookEvent) *HookMonitor {
 
 // AddEvent appends an event to the buffer (thread-safe, bounded).
 // When eventCh is set, events are forwarded to the TUI channel instead of logged.
-// The channel send happens after the lock is released — the event is already
-// committed to the ring buffer so ordering is determined by append order.
+//
+// The non-blocking channel send happens inside the lock to prevent a TOCTOU race
+// with CloseChannel: without this, a goroutine could read canSend=true, release the
+// lock, and then attempt to send on a channel that CloseChannel closed in between —
+// causing a panic. The select/default send never blocks, so holding the lock during
+// the send has negligible contention impact.
 //
 // The event.Data map is shared by the ring buffer, the TUI channel consumer,
 // and logEvent without synchronization beyond the initial lock. HandleHook
@@ -87,20 +91,25 @@ func (m *HookMonitor) AddEvent(event hookevt.HookEvent) {
 		m.events = fresh
 	}
 	m.stats[event.HookType]++
-	canSend := m.eventCh != nil && !m.chClosed
-	m.mu.Unlock()
 
-	if canSend {
-		// Non-blocking send — drop if TUI can't keep up.
+	// Channel send MUST happen inside the lock to prevent send-on-closed-channel
+	// panic. CloseChannel also acquires this lock before closing, so the send and
+	// close can never race.
+	if m.eventCh != nil && !m.chClosed {
 		select {
 		case m.eventCh <- event:
 		default:
 			m.Dropped.Add(1)
 		}
+		m.mu.Unlock()
 	} else if m.eventCh == nil {
+		m.mu.Unlock()
 		logEvent(event)
+	} else {
+		// Channel is closed (shutdown in progress) — count as dropped.
+		m.Dropped.Add(1)
+		m.mu.Unlock()
 	}
-	// If chClosed && eventCh != nil: channel is closed, skip both send and log.
 }
 
 // CloseChannel marks the TUI event channel as closed and closes it.

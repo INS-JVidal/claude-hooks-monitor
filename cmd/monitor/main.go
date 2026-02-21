@@ -74,12 +74,22 @@ func main() {
 
 	// Register HTTP handlers on a dedicated mux (avoids polluting DefaultServeMux).
 	mux := http.NewServeMux()
+
+	// Build a case-insensitive lookup so the catch-all can redirect mismatched
+	// casing (e.g. "/hook/pretooluse" → handled as "PreToolUse").
+	hookLookup := make(map[string]string, len(hookTypes))
 	for _, ht := range hookTypes {
 		mux.HandleFunc("/hook/"+ht, server.HandleHook(mon, ht))
+		hookLookup[strings.ToLower(ht)] = ht
 	}
-	// Catch-all for unknown hook types — returns 404 with an informative message
-	// instead of the default mux's generic "404 page not found".
+	// Catch-all for unregistered hook paths. If the path differs only in casing,
+	// handle it with the correct canonical type instead of returning 404.
 	mux.HandleFunc("/hook/", func(w http.ResponseWriter, r *http.Request) {
+		raw := strings.TrimPrefix(r.URL.Path, "/hook/")
+		if canonical, ok := hookLookup[strings.ToLower(raw)]; ok {
+			server.HandleHook(mon, canonical)(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		http.Error(w, `{"error":"unknown hook type"}`, http.StatusNotFound)
 	})

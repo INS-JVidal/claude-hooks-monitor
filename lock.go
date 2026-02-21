@@ -27,7 +27,7 @@ func acquireLock(lockPath, portFilePath string) *os.File {
 	if err != nil {
 		// Lock held by another process — read its info.
 		f.Close()
-		showRunningInstance(portFilePath)
+		showRunningInstance(lockPath, portFilePath)
 		os.Exit(1)
 	}
 
@@ -42,7 +42,7 @@ func acquireLock(lockPath, portFilePath string) *os.File {
 
 // showRunningInstance reads the port and PID files and prints info about
 // the already-running monitor instance.
-func showRunningInstance(portFilePath string) {
+func showRunningInstance(lockPath, portFilePath string) {
 	warn := color.New(color.FgYellow, color.Bold)
 	info := color.New(color.FgCyan)
 
@@ -50,7 +50,6 @@ func showRunningInstance(portFilePath string) {
 	fmt.Println()
 
 	// Read PID from lock file.
-	lockPath := strings.TrimSuffix(portFilePath, ".monitor-port") + ".monitor-lock"
 	if pidBytes, err := os.ReadFile(lockPath); err == nil {
 		pid := strings.TrimSpace(string(pidBytes))
 		info.Printf("  PID:  %s\n", pid)

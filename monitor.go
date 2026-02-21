@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"claude-hooks-monitor/internal/hookevt"
 
@@ -46,6 +47,7 @@ type HookMonitor struct {
 	mu      sync.RWMutex
 	stats   map[string]int
 	eventCh chan hookevt.HookEvent // nil when TUI inactive
+	Dropped atomic.Int64           // Events dropped because TUI channel was full
 }
 
 // NewHookMonitor returns an initialized HookMonitor.
@@ -60,6 +62,7 @@ func NewHookMonitor(eventCh chan hookevt.HookEvent) *HookMonitor {
 
 // AddEvent appends an event to the buffer (thread-safe, bounded).
 // When eventCh is set, events are forwarded to the TUI channel instead of logged.
+// Channel send is inside the lock to guarantee channel order matches insertion order.
 func (m *HookMonitor) AddEvent(event hookevt.HookEvent) {
 	m.mu.Lock()
 	m.events = append(m.events, event)
@@ -72,15 +75,18 @@ func (m *HookMonitor) AddEvent(event hookevt.HookEvent) {
 		m.events = fresh
 	}
 	m.stats[event.HookType]++
-	m.mu.Unlock()
 
 	if m.eventCh != nil {
 		// Non-blocking send — drop if TUI can't keep up.
 		select {
 		case m.eventCh <- event:
 		default:
+			m.Dropped.Add(1)
 		}
-	} else {
+	}
+	m.mu.Unlock()
+
+	if m.eventCh == nil {
 		logEvent(event)
 	}
 }

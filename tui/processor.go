@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"claude-hooks-monitor/internal/hookevt"
+
+	"github.com/mattn/go-runewidth"
 )
 
 // EventProcessor groups incoming hook events into the tree data model.
@@ -84,6 +86,10 @@ func (p *EventProcessor) handleSessionEnd(event hookevt.HookEvent) {
 	for k := range p.pendingPre {
 		delete(p.pendingPre, k)
 	}
+
+	// Nil out session/request so post-end events don't append to the dead session.
+	p.currentSession = nil
+	p.currentRequest = nil
 }
 
 func (p *EventProcessor) handleUserPrompt(event hookevt.HookEvent) {
@@ -182,8 +188,8 @@ func buildSummary(event hookevt.HookEvent) string {
 
 	case "UserPromptSubmit":
 		prompt := strVal(event.Data, "prompt")
-		if len(prompt) > 60 {
-			prompt = prompt[:57] + "..."
+		if runewidth.StringWidth(prompt) > 60 {
+			prompt = runewidth.Truncate(prompt, 60, "...")
 		}
 		return prompt
 
@@ -198,8 +204,8 @@ func buildSummary(event hookevt.HookEvent) string {
 
 	case "Notification":
 		msg := strVal(event.Data, "message")
-		if len(msg) > 50 {
-			msg = msg[:47] + "..."
+		if runewidth.StringWidth(msg) > 50 {
+			msg = runewidth.Truncate(msg, 50, "...")
 		}
 		if msg != "" {
 			return "Notification: " + msg
@@ -231,8 +237,8 @@ func inputSummary(data map[string]interface{}) string {
 	// Bash: show command
 	if cmd, ok := m["command"]; ok {
 		s := fmt.Sprintf("%v", cmd)
-		if len(s) > 50 {
-			s = s[:47] + "..."
+		if runewidth.StringWidth(s) > 50 {
+			s = runewidth.Truncate(s, 50, "...")
 		}
 		return s
 	}

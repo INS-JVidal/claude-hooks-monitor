@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"claude-hooks-monitor/internal/hookevt"
@@ -45,10 +46,14 @@ func main() {
 	if portFile == "" {
 		portFile = "hooks/.monitor-port"
 	}
-	lockFile := portFile[:len(portFile)-len(".monitor-port")] + ".monitor-lock"
+	lockFile := strings.TrimSuffix(portFile, ".monitor-port") + ".monitor-lock"
 
 	// Single-instance guard.
 	lockFd := acquireLock(lockFile, portFile)
+
+	// Remove stale port file from a previous crash. Lock acquisition proves
+	// we're the only instance, so any existing port file is stale.
+	os.Remove(portFile)
 
 	// Create event channel for TUI mode.
 	var eventCh chan hookevt.HookEvent
@@ -93,37 +98,46 @@ func main() {
 		fmt.Printf("  Port file: %s\n", portFile)
 	}
 
-	// Coordinated shutdown context.
+	// Coordinated shutdown: context signals goroutines, deferred cleanup always runs.
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	server := &http.Server{Handler: mux}
 
+	// Unified cleanup — deferred so it runs on both normal exit and signal-triggered exit.
+	// No os.Exit calls below this point; both modes fall through to defers.
+	defer func() {
+		cancel()
+		server.Shutdown(context.Background())
+		os.Remove(portFile)
+		lockFd.Close()
+		os.Remove(lockFile)
+	}()
+
+	// Unified signal handler for both modes.
+	// Cancels context (signals TUI to quit) and shuts down HTTP server
+	// (unblocks server.Serve in console mode).
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		<-sig
+		cancel()
+		server.Shutdown(context.Background())
+	}()
+
 	if *uiMode {
-		// Start HTTP server in background.
 		go server.Serve(ln)
 
-		// Cleanup on exit (deferred, runs after TUI quits).
-		defer func() {
-			server.Shutdown(context.Background())
-			os.Remove(portFile)
-			lockFd.Close()
-			os.Remove(lockFile)
-		}()
-
-		// Run TUI (blocks until user quits).
-		if err := tui.Run(ctx, eventCh, actualPort); err != nil {
+		// Run TUI (blocks until user quits or ctx is cancelled).
+		if err := tui.Run(ctx, eventCh, actualPort, &monitor.Dropped); err != nil {
 			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 		}
 	} else {
-		// Existing behavior: signal handler + blocking serve.
 		printBanner(actualPort, len(hookTypes))
-		setupSignalHandler(portFile, lockFile, lockFd)
+		// Blocks until server.Shutdown is called (from signal handler).
 		if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
 			fmt.Fprintf(os.Stderr, "Error starting server: %v\n", err)
-			os.Exit(1)
 		}
 	}
+	// Both paths fall through here → deferred cleanup runs.
 }
 
 // printBanner displays the startup banner in console mode.
@@ -138,17 +152,4 @@ func printBanner(port, numHooks int) {
 	fmt.Printf("  Listening on http://localhost:%d\n\n", port)
 	color.New(color.FgHiYellow).Println("  Waiting for hook events...")
 	fmt.Println()
-}
-
-// setupSignalHandler registers cleanup for SIGINT/SIGTERM in console mode.
-func setupSignalHandler(portFile, lockFile string, lockFd *os.File) {
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sig
-		os.Remove(portFile)
-		lockFd.Close()
-		os.Remove(lockFile)
-		os.Exit(0)
-	}()
 }

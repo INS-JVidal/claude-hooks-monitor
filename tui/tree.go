@@ -1,6 +1,10 @@
 package tui
 
-import "time"
+import (
+	"time"
+
+	"github.com/mattn/go-runewidth"
+)
 
 // Session groups all events from one Claude Code session.
 type Session struct {
@@ -64,8 +68,8 @@ func FlattenTree(sessions []*Session) []FlatRow {
 		}
 		for _, req := range s.Requests {
 			prompt := req.Prompt
-			if len(prompt) > 60 {
-				prompt = prompt[:57] + "..."
+			if runewidth.StringWidth(prompt) > 60 {
+				prompt = runewidth.Truncate(prompt, 60, "...")
 			}
 			if prompt == "" {
 				prompt = "(no prompt)"

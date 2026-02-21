@@ -233,3 +233,98 @@ A typical session flow when asking Claude to write a file:
 ```
 
 In the monitor, each event appears as a colorized block with full JSON data, making it easy to trace the complete execution flow.
+
+## Slash Command Examples
+
+### /monitor-hooks status
+
+```
+Monitor: STOPPED
+
+Hook Configuration (/home/user/claude-hooks-monitor/hooks/hook_monitor.conf):
+  SessionStart           OFF
+  UserPromptSubmit       OFF
+  PreToolUse             OFF
+  PostToolUse            OFF
+  PostToolUseFailure     OFF
+  PermissionRequest      OFF
+  Notification           OFF
+  SubagentStart          OFF
+  SubagentStop           OFF
+  Stop                   OFF
+  TeammateIdle           OFF
+  TaskCompleted          OFF
+  ConfigChange           OFF
+  PreCompact             OFF
+  SessionEnd             OFF
+```
+
+### /monitor-hooks activate
+
+```
+All hooks activated.
+
+Monitor: RUNNING (PID 12345, port 8080, http://localhost:8080)
+
+Hook Configuration (/home/user/claude-hooks-monitor/hooks/hook_monitor.conf):
+  SessionStart           ON
+  UserPromptSubmit       ON
+  PreToolUse             ON
+  PostToolUse            ON
+  ...
+```
+
+### /monitor-hooks show-all
+
+```
+Hook Audit (known hooks vs /home/user/claude-hooks-monitor/hooks/hook_monitor.conf):
+
+  SessionStart           ON
+  SessionEnd             ON
+  UserPromptSubmit       ON
+  PreToolUse             OFF
+  PostToolUse            OFF
+  PostToolUseFailure     ON
+  PermissionRequest      ON
+  Notification           ON
+  SubagentStart          ON
+  SubagentStop           ON
+  Stop                   ON
+  TeammateIdle           ON
+  TaskCompleted          ON
+  ConfigChange           ON
+  PreCompact             ON
+
+Summary: 15 known hooks, 15 in config, 0 missing, 0 extra
+```
+
+### /monitor-hooks PreToolUse on
+
+```
+PreToolUse = yes (enabled)
+```
+
+### /monitor-hooks help
+
+```
+Usage: /monitor-hooks <subcommand>
+
+Subcommands:
+  activate              Enable all hooks
+  deactivate            Disable all hooks
+  status                Show monitor state + per-hook config
+  show-all              Audit: known hooks vs config (find missing/extra)
+  <HookType> on         Enable a specific hook
+  <HookType> off        Disable a specific hook
+
+Valid hook types:
+  SessionStart  SessionEnd  UserPromptSubmit  PreToolUse
+  PostToolUse  PostToolUseFailure  PermissionRequest
+  Notification  SubagentStart  SubagentStop  Stop
+  TeammateIdle  TaskCompleted  ConfigChange  PreCompact
+
+Examples:
+  /monitor-hooks activate
+  /monitor-hooks PreToolUse off
+  /monitor-hooks status
+```

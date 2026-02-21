@@ -15,7 +15,7 @@ HOOK_DIR    := hooks
 CONF        := $(HOOK_DIR)/hook_monitor.conf
 
 .PHONY: help deps build build-hook-client run run-ui run-background test test-api send-test-hook \
-        clean install check stats show-config reset-config show-hooks-config
+        clean install install-command check stats show-config reset-config show-hooks-config
 
 help: ## Show all targets with descriptions
 	@echo ""
@@ -89,6 +89,21 @@ install: build ## Install binaries to ~/bin
 	@mkdir -p ~/bin
 	cp $(BINARY) ~/bin/claude-hooks-monitor
 	@echo "Installed to ~/bin/claude-hooks-monitor"
+
+install-command: ## Install /monitor-hooks slash command into another project
+	@if [ -z "$(PROJECT)" ]; then \
+		echo "Usage: make install-command PROJECT=~/my-project"; \
+		echo ""; \
+		echo "Installs the /monitor-hooks slash command into the target project."; \
+		echo "Rewrites paths so the command works from any project directory."; \
+		exit 1; \
+	fi
+	@mkdir -p "$(PROJECT)/.claude/commands"
+	@ESCAPED_DIR=$$(printf '%s\n' "$(CURDIR)" | sed -e 's/[\/&]/\\&/g'); \
+	sed "s|\$$CLAUDE_PROJECT_DIR|$$ESCAPED_DIR|g" "./.claude/commands/monitor-hooks.md" \
+		> "$(PROJECT)/.claude/commands/monitor-hooks.md"
+	@echo "Installed /monitor-hooks command to $(PROJECT)/.claude/commands/monitor-hooks.md"
+	@echo "The command references this monitor at: $(CURDIR)"
 
 check: ## Check if server is running
 	@curl -sf http://localhost:$(PORT)/health > /dev/null 2>&1 \

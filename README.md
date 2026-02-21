@@ -198,6 +198,43 @@ make run
 claude
 ```
 
+### Slash command (from within Claude Code)
+
+When running `claude` inside the monitor project, the `/monitor-hooks` slash command is available to toggle hook monitoring:
+
+```
+/monitor-hooks activate             # Enable all hooks
+/monitor-hooks deactivate           # Disable all hooks
+/monitor-hooks status               # Show monitor state + per-hook config
+/monitor-hooks show-all             # Audit: compare known hooks vs config
+/monitor-hooks PreToolUse off       # Disable a specific hook
+/monitor-hooks PreToolUse on        # Enable a specific hook
+/monitor-hooks help                 # Show usage and valid hook types
+```
+
+Hook names are case-insensitive. Changes take effect immediately (the hook-client reads the config on every invocation).
+
+To use `/monitor-hooks` from a different project:
+
+```bash
+cd ~/claude-hooks-monitor
+make install-command PROJECT=~/my-project
+```
+
+This copies the slash command with absolute paths baked in, so it works from any project directory.
+
+**Permissions:** Claude Code will ask for confirmation the first time you run `/monitor-hooks`. To auto-approve, add this to your project's `.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allowedTools": ["Bash(*monitor-hooks*)"]
+  }
+}
+```
+
+Alternatively, use `claude --allowedTools 'Bash(*monitor-hooks*)'` when launching, or simply press `y` when prompted (Claude Code may remember the approval for the session).
+
 ### Checking statistics
 
 ```bash
@@ -312,6 +349,8 @@ make test
 ```
 claude-hooks-monitor/
 ├── .claude/
+│   ├── commands/
+│   │   └── monitor-hooks.md      # /monitor-hooks slash command for Claude Code
 │   └── settings.json            # Hook config + permissions
 ├── cmd/
 │   └── hook-client/main.go      # Go hook client — single-shot HTTP forwarder

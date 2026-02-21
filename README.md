@@ -1,22 +1,29 @@
 # Claude Code Hooks Monitor
 
-A real-time monitoring and logging system for Claude Code CLI hooks. Watch every hook event as it fires — colorized in your terminal — to understand how Claude Code's hook system works.
+A real-time monitoring and logging system for Claude Code CLI hooks. Watch every hook event as it fires — colorized in your terminal **or explore interactively in a tree UI** — to understand how Claude Code's hook system works.
 
 ## Features
 
 - Captures all 14 Claude Code hook event types (+ SessionEnd)
+- **Interactive tree UI** (`--ui` flag) — collapsible Session → Request → Tool hierarchy
+- Vim-style keyboard navigation (j/k/h/l, g/G, space toggle)
+- Auto-scroll follows new events in real time
+- Pre/Post tool event pairing — PreToolUse automatically links to its PostToolUse result
 - Colorized console output — each hook type gets a unique color
 - REST API with `/stats`, `/events`, `/health` endpoints
 - Per-hook toggle config — enable/disable individual hooks without restarting
 - Non-blocking — hooks always exit 0, never interfere with Claude
 - Bounded memory — ring buffer caps event history at 1000, with proper GC-friendly compaction
+- Non-blocking TUI channel with dropped event counter in the header
+- Unified graceful shutdown — both console and TUI modes clean up lock files, port files, and HTTP server
+- Single-instance guard — file lock prevents duplicate monitors with informative diagnostics
 - Go hook-client binary — fast, single-shot forwarder with 2s timeout
 - Python hook script alternative (reads `hook_event_name` from stdin)
 - End-to-end test suite with 3 test phases
 
 ## Prerequisites
 
-- **Go** 1.21+ — [golang.org/dl](https://go.dev/dl/)
+- **Go** 1.24+ — [golang.org/dl](https://go.dev/dl/)
 - **Python** 3.11+
 - **uv** — [docs.astral.sh/uv](https://docs.astral.sh/uv/)
 - **Claude Code CLI** — latest version
@@ -33,8 +40,11 @@ make deps
 **Step 2: Start the monitor** (~30 seconds)
 
 ```bash
-# Terminal 1: run the server
+# Terminal 1: run the server (console mode)
 make run
+
+# Or: interactive tree UI
+make run-ui
 ```
 
 **Step 3: Test it** (~1 minute)
@@ -112,6 +122,44 @@ make stats
 curl http://localhost:8080/events?limit=5 | python3 -m json.tool
 ```
 
+## Tree UI Mode
+
+The `--ui` flag launches an interactive terminal UI built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). Events are organized into a collapsible tree:
+
+```
+Session (by session_id)
+ └─ Request (each UserPromptSubmit)
+     ├─ PreToolUse: Bash → echo hello
+     │   └─ PostToolUse: Bash completed     ← auto-paired
+     ├─ PreToolUse: Read → /src/main.go
+     │   └─ PostToolUseFailure: Read FAILED  ← auto-paired
+     ├─ Notification
+     └─ Stop
+```
+
+**Start the TUI:**
+
+```bash
+./bin/monitor --ui          # after 'make build'
+make run-ui                 # build + run in one step
+PORT=9000 make run-ui       # custom port
+```
+
+**Key bindings:**
+
+| Key | Action |
+|-----|--------|
+| `j` / `↓` | Move cursor down |
+| `k` / `↑` | Move cursor up |
+| `l` / `→` / `Enter` | Expand node |
+| `h` / `←` | Collapse node |
+| `Space` | Toggle expand/collapse |
+| `g` | Jump to top |
+| `G` | Jump to bottom (re-enables auto-scroll) |
+| `q` / `Ctrl+C` | Quit |
+
+The header shows the port, total event count, and a dropped event counter (visible only if the TUI can't keep up with the event rate).
+
 ## Testing
 
 The test suite has 3 phases:
@@ -188,20 +236,31 @@ Changes take effect immediately. View current state: `make show-config`. Reset a
 ```
 claude-hooks-monitor/
 ├── .claude/
-│   └── settings.json         # Hook config + permissions
-├── hooks/
-│   ├── hook-client            # Compiled Go hook client binary
-│   ├── hook_monitor.py        # Alternative Python hook script
-│   └── hook_monitor.conf      # Toggle: enable/disable hooks
+│   └── settings.json            # Hook config + permissions
 ├── cmd/
-│   └── hook-client/main.go    # Go hook client source
-├── main.go                    # Go server
-├── go.mod / go.sum           # Go dependencies
-├── Makefile                  # Build automation
-├── test-hooks.sh             # Test suite (3 phases)
-├── README.md                 # This file
-├── EXAMPLES.md               # Output examples
-└── ARCHITECTURE.md           # Architecture deep-dive
+│   └── hook-client/main.go      # Go hook client — single-shot HTTP forwarder
+├── internal/
+│   └── hookevt/hookevt.go       # Shared HookEvent type (used by monitor + TUI)
+├── tui/
+│   ├── model.go                 # Bubble Tea model, key handling, viewport
+│   ├── tree.go                  # Tree data structures (Session/Request/EventNode)
+│   ├── processor.go             # Event → tree builder with Pre/Post pairing
+│   └── styles.go                # Lipgloss styles and row rendering
+├── main.go                      # Entrypoint — flag parsing, HTTP setup, mode dispatch
+├── monitor.go                   # HookMonitor — event buffer, stats, TUI channel
+├── server.go                    # HTTP handlers (/hook, /stats, /events, /health)
+├── lock.go                      # Single-instance file lock with diagnostics
+├── hooks/
+│   ├── hook-client              # Compiled Go hook client binary
+│   ├── hook_monitor.py          # Alternative Python hook script
+│   └── hook_monitor.conf        # Toggle: enable/disable hooks
+├── plans/                       # Development planning documents
+├── go.mod / go.sum              # Go dependencies (bubbletea, lipgloss, fatih/color)
+├── Makefile                     # Build automation (run, run-ui, test, etc.)
+├── test-hooks.sh                # Test suite (3 phases)
+├── README.md                    # This file
+├── EXAMPLES.md                  # Output examples
+└── ARCHITECTURE.md              # Architecture deep-dive
 ```
 
 ## Performance
@@ -210,27 +269,34 @@ The codebase is optimized for minimal impact on Claude Code responsiveness:
 
 - **Ring buffer compaction** — uses `copy()` into fresh slices so the GC can reclaim old backing arrays (avoids the classic Go slice-pinning memory leak)
 - **Lock-free logging** — event logging (JSON marshal + terminal I/O) happens outside the mutex, so concurrent API readers are never blocked by console output
+- **Event channel ordering** — channel send is inside the mutex, guaranteeing TUI receives events in insertion order
+- **Non-blocking TUI channel** — buffered channel (256) with `select`/`default` drop; counter tracks dropped events in the TUI header
 - **Pre-computed colors** — hook type colors are allocated once at startup in a map, not on every event
 - **Bounded I/O** — both server and hook-client cap request/stdin reads at 1 MiB via `io.LimitReader`
 - **Single-shot HTTP** — hook-client disables keep-alive since it's a short-lived process (one request, then exit)
 - **UTF-8 safe truncation** — string truncation respects rune boundaries to avoid producing invalid UTF-8
 - **2-second timeout** — hook-client times out quickly if the monitor is unreachable; connection-refused returns in milliseconds
+- **Unified shutdown** — context cancellation + deferred cleanup ensures lock files, port files, and HTTP server are released in both console and TUI modes
 
 ## Next Steps
 
 Ideas for extending this project:
 
+- **TUI detail pane** — split view showing full event JSON for the selected node
+- **TUI search/filter** — `/` to filter events by hook type or tool name
 - Add a **web dashboard** with real-time WebSocket updates
 - **Persist events** to SQLite for post-session analysis
-- Add **event filtering** with query parameters
+- **Session timeline** — visual duration bars for tool execution (Pre→Post delta)
 - Export to **CSV/JSON** for data analysis
 - Add **Prometheus metrics** for monitoring at scale
 
 ## Resources
 
 - [Claude Code Hooks Documentation](https://docs.claude.com/en/docs/claude-code/hooks)
+- [Bubble Tea](https://github.com/charmbracelet/bubbletea) — TUI framework (The Elm Architecture for Go)
+- [Lip Gloss](https://github.com/charmbracelet/lipgloss) — TUI styling
+- [Go fatih/color](https://github.com/fatih/color) — console colorization
 - [uv Documentation](https://docs.astral.sh/uv/)
-- [Go fatih/color](https://github.com/fatih/color)
 - [Python requests](https://requests.readthedocs.io/)
 
 ## License

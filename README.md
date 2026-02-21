@@ -23,19 +23,23 @@ A real-time monitoring and logging system for Claude Code CLI hooks. Watch every
 
 ## Prerequisites
 
-- **Go** 1.21+ — [go.dev/dl](https://go.dev/dl/)
-- **Git** — [git-scm.com](https://git-scm.com/)
-- **Make** — included in build-essential
 - **Claude Code CLI** — latest version
-- *Optional:* Python 3.11+, uv, jq, curl (for test suite and alternative hook script)
+- **Go** 1.21+ ([go.dev/dl](https://go.dev/dl/)) — required to build from source
+- **Git** — required to clone the repository
+- **Make** — optional (needed for `make run`, `make run-ui`, etc.; not needed for building)
+- *Optional:* Python 3.11+, uv, jq (for test suite and alternative hook script)
 
 ## Installation
 
-**One-line install** (clones, builds, and verifies):
+### Linux / macOS
+
+**One-line install** (clones and builds from source):
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/INS-JVidal/claude-hooks-monitor/main/install.sh | bash
 ```
+
+On macOS with Homebrew, the installer automatically installs missing Go/Git dependencies.
 
 Custom install location:
 
@@ -44,12 +48,23 @@ INSTALL_DIR=~/projects/hooks-monitor \
   curl -sSL https://raw.githubusercontent.com/INS-JVidal/claude-hooks-monitor/main/install.sh | bash
 ```
 
-**Manual install:**
+### Windows
+
+**PowerShell installer** (clones and builds from source):
+
+```powershell
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/INS-JVidal/claude-hooks-monitor/main/install.ps1" -OutFile install.ps1
+.\install.ps1
+```
+
+Requires Go and Git. If missing, the script suggests `winget install` commands.
+
+### Manual install (all platforms)
 
 ```bash
 git clone https://github.com/INS-JVidal/claude-hooks-monitor.git
 cd claude-hooks-monitor
-make build
+make build          # or: go build -ldflags="-s -w" -o bin/monitor . && go build -ldflags="-s -w" -o hooks/hook-client ./cmd/hook-client
 ```
 
 **System dependencies (Ubuntu/Debian only):**
@@ -310,15 +325,20 @@ claude-hooks-monitor/
 ├── main.go                      # Entrypoint — flag parsing, HTTP setup, mode dispatch
 ├── monitor.go                   # HookMonitor — event buffer, stats, TUI channel
 ├── server.go                    # HTTP handlers (/hook, /stats, /events, /health)
-├── lock.go                      # Single-instance file lock with diagnostics
+├── lock_unix.go                 # Unix file locking (flock)
+├── lock_windows.go              # Windows file locking (LockFileEx)
+├── lock_common.go               # Shared lock diagnostics (showRunningInstance)
+├── signals_unix.go              # Unix shutdown signals (SIGINT + SIGTERM)
+├── signals_windows.go           # Windows shutdown signals (SIGINT only)
 ├── hooks/
-│   ├── hook-client              # Compiled Go hook client binary
+│   ├── hook-client[.exe]        # Compiled Go hook client binary
 │   ├── hook_monitor.py          # Alternative Python hook script
 │   └── hook_monitor.conf        # Toggle: enable/disable hooks
 ├── plans/                       # Development planning documents
 ├── go.mod / go.sum              # Go dependencies (bubbletea, lipgloss, fatih/color)
 ├── Makefile                     # Build automation (run, run-ui, test, etc.)
-├── install.sh                   # Curl-pipe-bash installer
+├── install.sh                   # Bash installer (Linux/macOS)
+├── install.ps1                  # PowerShell installer (Windows)
 ├── setup.sh                     # Ubuntu/Debian system deps installer
 ├── test-hooks.sh                # Test suite (3 phases)
 ├── README.md                    # This file
@@ -341,6 +361,16 @@ The codebase is optimized for minimal impact on Claude Code responsiveness:
 - **UTF-8 safe truncation** — string truncation respects rune boundaries to avoid producing invalid UTF-8
 - **2-second timeout** — hook-client times out quickly if the monitor is unreachable; connection-refused returns in milliseconds
 - **Unified shutdown** — context cancellation + deferred cleanup ensures lock files, port files, and HTTP server are released in both console and TUI modes
+
+## Platform Notes
+
+- **Windows TUI:** Bubble Tea supports Windows terminals (conhost, Windows Terminal) but is less tested than Linux/macOS.
+- **Windows `run-background`:** The `make run-background` target is not available on Windows (uses `nohup`/`lsof`). Use `make run` in a separate terminal instead.
+- **Windows hooks configuration:** On Windows, use backslash paths and `.exe` extension in `.claude/settings.json`:
+  ```json
+  "command": "C:\\Users\\you\\claude-hooks-monitor\\hooks\\hook-client.exe"
+  ```
+- **macOS `reset-config`:** `make reset-config` may not work on macOS due to `sed -i` syntax differences. Use `sed -i '' 's/= no/= yes/g' hooks/hook_monitor.conf` manually.
 
 ## Next Steps
 

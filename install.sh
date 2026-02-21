@@ -1,7 +1,10 @@
 #!/bin/bash
 #
-# Claude Code Hooks Monitor — Installer
+# Claude Code Hooks Monitor — Installer (builds from source)
 # Usage: curl -sSL https://raw.githubusercontent.com/INS-JVidal/claude-hooks-monitor/main/install.sh | bash
+#
+# Requires: Go (>= 1.21), Git. Make is optional (used by `make run`, not by this script).
+# On macOS with Homebrew, missing dependencies are installed automatically.
 #
 # Environment variables:
 #   INSTALL_DIR  — where to clone the repo (default: ~/claude-hooks-monitor)
@@ -47,6 +50,27 @@ extract_version() {
     echo "$1" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1
 }
 
+# ── Argument parsing ────────────────────────────────────────────────────────
+
+parse_args() {
+    for arg in "$@"; do
+        case "$arg" in
+            --help|-h)
+                echo "Usage: install.sh"
+                echo ""
+                echo "Clones the repository and builds from source."
+                echo "Requires Go (>= $MIN_GO_VERSION) and Git."
+                echo ""
+                echo "Set INSTALL_DIR to customize the install location (default: ~/claude-hooks-monitor)."
+                exit 0
+                ;;
+            *)
+                warn "Unknown argument: $arg"
+                ;;
+        esac
+    done
+}
+
 # ── Platform detection ───────────────────────────────────────────────────────
 
 detect_platform() {
@@ -86,9 +110,9 @@ check_prerequisites() {
         missing+=("git")
     fi
 
-    # make
+    # make (optional — warn but don't fail)
     if ! command_exists make; then
-        missing+=("make")
+        warn "make not found — you can still build, but 'make run' and other targets won't work."
     fi
 
     # go (with version check)
@@ -119,18 +143,41 @@ check_prerequisites() {
             echo ""
             install_debian_deps
             # Re-check after install
-            if ! command_exists go || ! command_exists git || ! command_exists make; then
+            if ! command_exists go || ! command_exists git; then
                 fail "Some dependencies are still missing after setup.sh. Check the output above."
             fi
             ;;
         macos)
-            echo -e "${YELLOW}Install missing tools with Homebrew:${NC}"
-            echo ""
-            echo "  brew install go git make"
-            echo ""
-            echo "If you don't have Homebrew: https://brew.sh"
-            echo ""
-            fail "Install the missing dependencies and re-run this script."
+            if command_exists brew; then
+                info "Installing missing dependencies via Homebrew..."
+                local brew_pkgs=()
+                for dep in "${missing[@]}"; do
+                    case "$dep" in
+                        go*) brew_pkgs+=("go") ;;
+                        git) brew_pkgs+=("git") ;;
+                    esac
+                done
+                if [ ${#brew_pkgs[@]} -gt 0 ]; then
+                    brew install "${brew_pkgs[@]}"
+                fi
+                # Re-source PATH for newly installed Go
+                if [ -d "$(brew --prefix)/opt/go/bin" ]; then
+                    export PATH="$PATH:$(brew --prefix)/opt/go/bin"
+                fi
+                # Re-verify after install
+                if ! command_exists go || ! command_exists git; then
+                    fail "Some dependencies are still missing after Homebrew install. Check the output above."
+                fi
+                ok "Dependencies installed via Homebrew"
+            else
+                echo -e "${YELLOW}Install missing tools with Homebrew:${NC}"
+                echo ""
+                echo "  brew install go git make"
+                echo ""
+                echo "If you don't have Homebrew: https://brew.sh"
+                echo ""
+                fail "Install Homebrew first (https://brew.sh), then re-run this script."
+            fi
             ;;
         fedora)
             echo -e "${YELLOW}Install missing tools:${NC}"
@@ -151,7 +198,7 @@ check_prerequisites() {
             echo ""
             echo "  - Go >= $MIN_GO_VERSION : https://go.dev/dl/"
             echo "  - git                   : https://git-scm.com/"
-            echo "  - make                  : (usually in build-essential or base-devel)"
+            echo "  - make (optional)       : usually in build-essential or base-devel"
             echo ""
             fail "Install the missing dependencies and re-run this script."
             ;;
@@ -210,7 +257,14 @@ clone_or_update() {
 
 build_project() {
     info "Building monitor and hook-client..."
-    make -C "$INSTALL_DIR" build
+    if command_exists make; then
+        make -C "$INSTALL_DIR" build
+    else
+        info "make not found — building with go build directly..."
+        mkdir -p "$INSTALL_DIR/bin"
+        (cd "$INSTALL_DIR" && go build -ldflags="-s -w" -o bin/monitor .)
+        (cd "$INSTALL_DIR" && go build -ldflags="-s -w" -o hooks/hook-client ./cmd/hook-client)
+    fi
     ok "Build complete"
 }
 
@@ -283,6 +337,7 @@ print_banner() {
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 main() {
+    parse_args "$@"
     print_banner
     detect_platform
     info "Platform: $PLATFORM"
@@ -291,14 +346,12 @@ main() {
 
     check_prerequisites
     echo ""
-
     clone_or_update
     echo ""
-
     build_project
     echo ""
-
     verify_build
+
     print_next_steps
 }
 

@@ -1,8 +1,14 @@
 # Claude Code Hooks Monitor — Makefile
 # Usage: make help
 
-BINARY      := bin/monitor
-HOOK_CLIENT := hooks/hook-client
+ifeq ($(OS),Windows_NT)
+  EXE := .exe
+else
+  EXE :=
+endif
+
+BINARY      := bin/monitor$(EXE)
+HOOK_CLIENT := hooks/hook-client$(EXE)
 PORT        ?= 8080
 GO          := $(shell which go 2>/dev/null || echo /usr/local/go/bin/go)
 HOOK_DIR    := hooks
@@ -43,12 +49,16 @@ run-ui: build ## Run server with interactive tree UI
 	PORT=$(PORT) ./$(BINARY) --ui
 
 run-background: ## Run server in background (output to monitor.log)
+ifeq ($(OS),Windows_NT)
+	@echo "run-background is not supported on Windows. Use 'make run' in a separate terminal."
+else
 	@mkdir -p bin
 	$(GO) build -ldflags="-s -w" -o $(BINARY) .
 	PORT=$(PORT) nohup ./$(BINARY) > monitor.log 2>&1 &
 	@sleep 1
 	@echo "Server started in background (PID $$(lsof -ti:$(PORT) 2>/dev/null || echo '?'))"
 	@echo "Log: tail -f monitor.log"
+endif
 
 test: ## Run full test suite (requires running server)
 	@./test-hooks.sh
@@ -106,7 +116,7 @@ reset-config: ## Reset hook config to all-enabled defaults
 	@echo "All hooks reset to enabled."
 
 show-hooks-config: ## Print hooks JSON snippet for .claude/settings.json
-	@HOOK_CLIENT="$(CURDIR)/hooks/hook-client"; \
+	@HOOK_CLIENT="$(CURDIR)/hooks/hook-client$(EXE)"; \
 	echo ""; \
 	echo "  Add this to your project's .claude/settings.json to monitor hooks:"; \
 	echo "  (hook-client path: $$HOOK_CLIENT)"; \

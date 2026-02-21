@@ -8,38 +8,61 @@ Detailed installation instructions for all platforms. For a quick start, see the
 |------|----------------|---------|-------------|
 | **Go** | 1.21+ | Build monitor & hook-client | [go.dev/dl](https://go.dev/dl/) |
 | **Git** | any | Clone the repository | [git-scm.com](https://git-scm.com/) |
-| **Make** | any | Build automation | (included in build-essential) |
-| **Python** | 3.11+ | Alternative hook script | [python.org](https://www.python.org/downloads/) |
-| **uv** | any | Python dependency management | [docs.astral.sh/uv](https://docs.astral.sh/uv/) |
-| **jq** | any | JSON processing (tests) | [jqlang.github.io/jq](https://jqlang.github.io/jq/) |
-| **curl** | any | HTTP testing, installer | (pre-installed on most systems) |
+| **Make** | any (optional) | Build automation (`make run`, etc.) | (included in build-essential) |
 
-> **Note:** Only Go, Git, and Make are strictly required to build and run the monitor. Python, uv, jq, and curl are needed for the test suite and alternative hook script.
+> **Note:** Make is optional. The installer scripts call `go build` directly if Make is not available.
+
+**Optional (for test suite and alternative hook script):**
+
+| Tool | Purpose | Install Link |
+|------|---------|-------------|
+| **Python** | 3.11+ — Alternative hook script | [python.org](https://www.python.org/downloads/) |
+| **uv** | Python dependency management | [docs.astral.sh/uv](https://docs.astral.sh/uv/) |
+| **jq** | JSON processing (tests) | [jqlang.github.io/jq](https://jqlang.github.io/jq/) |
 
 ---
 
 ## Quick Install
 
-One command to clone, build, and verify:
+### Linux / macOS
+
+One command to clone and build from source:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/INS-JVidal/claude-hooks-monitor/main/install.sh | bash
 ```
 
-Custom install location:
+The installer:
+1. Detects your platform (Linux distro / macOS)
+2. Checks for Go and Git (on macOS with Homebrew, installs them automatically)
+3. Clones the repository
+4. Builds `monitor` and `hook-client` from source
+5. Verifies both binaries exist
+6. Prints next steps
+
+### Windows
+
+PowerShell installer:
+
+```powershell
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/INS-JVidal/claude-hooks-monitor/main/install.ps1" -OutFile install.ps1
+.\install.ps1
+```
+
+The installer checks for Go and Git, suggests `winget install` commands if missing, then clones and builds.
+
+### Custom install location
 
 ```bash
 INSTALL_DIR=~/projects/hooks-monitor \
   curl -sSL https://raw.githubusercontent.com/INS-JVidal/claude-hooks-monitor/main/install.sh | bash
 ```
 
-The installer:
-1. Detects your platform
-2. Checks for Go, Git, and Make (on Ubuntu/Debian, offers to install them automatically)
-3. Clones (or updates) the repository
-4. Runs `make build`
-5. Verifies `bin/monitor` and `hooks/hook-client` exist
-6. Prints next steps
+On Windows:
+
+```powershell
+.\install.ps1 -InstallDir "C:\Users\you\projects\hooks-monitor"
+```
 
 Safe to run multiple times — if the repo already exists, it does `git pull` and rebuilds.
 
@@ -107,6 +130,34 @@ make build
 sudo pacman -S go git make jq curl
 git clone https://github.com/INS-JVidal/claude-hooks-monitor.git
 cd claude-hooks-monitor
+make build
+```
+
+### Windows
+
+**Option A — Use the PowerShell installer** (recommended):
+
+```powershell
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/INS-JVidal/claude-hooks-monitor/main/install.ps1" -OutFile install.ps1
+.\install.ps1
+```
+
+**Option B — Manual:**
+
+1. Install Go from [go.dev/dl](https://go.dev/dl/) or via `winget install GoLang.Go`
+2. Install Git from [git-scm.com](https://git-scm.com/download/win) or via `winget install Git.Git`
+3. Clone and build:
+
+```powershell
+git clone https://github.com/INS-JVidal/claude-hooks-monitor.git
+cd claude-hooks-monitor
+go build -ldflags="-s -w" -o bin\monitor.exe .
+go build -ldflags="-s -w" -o hooks\hook-client.exe .\cmd\hook-client
+```
+
+Or with Make (if installed):
+
+```powershell
 make build
 ```
 
@@ -309,6 +360,16 @@ To install uv:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source ~/.bashrc
 ```
+
+### Windows-specific issues
+
+- **`.exe` extension:** All binaries need the `.exe` extension on Windows. If `make build` doesn't add it, build manually: `go build -o bin\monitor.exe .`
+- **hook-client path in settings.json:** Use backslash paths and `.exe` extension:
+  ```json
+  "command": "C:\\Users\\you\\claude-hooks-monitor\\hooks\\hook-client.exe"
+  ```
+- **`make run-background`:** Not supported on Windows (uses `nohup`/`lsof`). Use `make run` in a separate terminal, or run `.\bin\monitor.exe` directly.
+- **Claude Code + Windows hooks:** Claude Code's hook system on Windows may require the `.exe` extension and backslash paths. Test with `make show-hooks-config` and adjust as needed.
 
 ### WSL-specific issues
 

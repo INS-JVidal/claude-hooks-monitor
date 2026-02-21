@@ -84,6 +84,14 @@ func formatEventNode(ev *EventNode, wrapWidth int) []string {
 		lines = append(lines, contextLines...)
 	}
 
+	// Data section — all remaining top-level fields not already shown.
+	dataLines := formatRemainingData(ev.Data, wrapWidth)
+	if len(dataLines) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, paneSectionStyle.Render("── Data "+strings.Repeat("─", 27)))
+		lines = append(lines, dataLines...)
+	}
+
 	// Result section — PostPair if available.
 	if ev.PostPair != nil {
 		lines = append(lines, "")
@@ -152,10 +160,12 @@ func formatInputFields(input map[string]interface{}, wrapWidth int) []string {
 	sortStrings(remaining)
 	for _, k := range remaining {
 		s := fmt.Sprintf("%v", input[k])
-		if len(s) > 80 {
-			s = s[:77] + "..."
+		if strings.Contains(s, "\n") || len(s) > wrapWidth {
+			lines = append(lines, paneLabelStyle.Render(pad(k+":", labelWidth))+" ")
+			lines = append(lines, formatLongValue(s, wrapWidth)...)
+		} else {
+			lines = append(lines, formatField(k, s))
 		}
-		lines = append(lines, formatField(k, s))
 	}
 
 	return lines
@@ -177,6 +187,93 @@ func formatContextFields(data map[string]interface{}) []string {
 		}
 	}
 	return lines
+}
+
+// formatRemainingData renders all top-level keys in ev.Data that weren't shown
+// by the Input or Context sections.
+func formatRemainingData(data map[string]interface{}, wrapWidth int) []string {
+	// Keys already handled by other sections.
+	shown := map[string]bool{
+		"tool_input":      true,
+		"tool_output":     true,
+		"hook_event_name": true, // Redundant with the title.
+		"session_id":      true,
+		"cwd":             true,
+		"permission_mode": true,
+		"agent_type":      true,
+		"message":         true,
+		"tool_name":       true, // Already in the title.
+	}
+
+	var keys []string
+	for k := range data {
+		if !shown[k] {
+			keys = append(keys, k)
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	sortStrings(keys)
+
+	var lines []string
+	for _, k := range keys {
+		lines = append(lines, formatValue(k, data[k], wrapWidth)...)
+	}
+	return lines
+}
+
+// formatValue renders a single key-value pair, handling maps, slices, and scalars.
+func formatValue(key string, val interface{}, wrapWidth int) []string {
+	switch v := val.(type) {
+	case map[string]interface{}:
+		var lines []string
+		lines = append(lines, paneLabelStyle.Render(pad(key+":", labelWidth)))
+		var subKeys []string
+		for sk := range v {
+			subKeys = append(subKeys, sk)
+		}
+		sortStrings(subKeys)
+		for _, sk := range subKeys {
+			s := fmt.Sprintf("%v", v[sk])
+			if strings.Contains(s, "\n") || len(s) > wrapWidth {
+				lines = append(lines, "  "+paneLabelStyle.Render(pad(sk+":", labelWidth))+" ")
+				lines = append(lines, formatLongValue(s, wrapWidth)...)
+			} else {
+				lines = append(lines, "  "+formatField(sk, s))
+			}
+		}
+		return lines
+
+	case []interface{}:
+		var lines []string
+		lines = append(lines, paneLabelStyle.Render(pad(key+":", labelWidth)))
+		for i, item := range v {
+			s := fmt.Sprintf("%v", item)
+			prefix := fmt.Sprintf("  [%d] ", i)
+			if strings.Contains(s, "\n") || len(s) > wrapWidth {
+				lines = append(lines, prefix)
+				lines = append(lines, formatLongValue(s, wrapWidth)...)
+			} else {
+				lines = append(lines, prefix+paneValueStyle.Render(s))
+			}
+			if i >= maxContentLines-1 && i < len(v)-1 {
+				lines = append(lines, "  "+paneSectionStyle.Render(fmt.Sprintf("... (%d more items)", len(v)-i-1)))
+				break
+			}
+		}
+		return lines
+
+	default:
+		s := fmt.Sprintf("%v", val)
+		if strings.Contains(s, "\n") || len(s) > wrapWidth {
+			var lines []string
+			lines = append(lines, paneLabelStyle.Render(pad(key+":", labelWidth))+" ")
+			lines = append(lines, formatLongValue(s, wrapWidth)...)
+			return lines
+		}
+		return []string{formatField(key, s)}
+	}
 }
 
 // formatLongValue renders a potentially long string, truncating after maxContentLines.

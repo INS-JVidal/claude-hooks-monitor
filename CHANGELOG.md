@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Hook configuration menu in TUI (`H` key) — toggle individual hooks on/off
 - `internal/config` package for INI-based hook config read/write
 - Show build version in TUI header
+- `hook-client install-hooks` subcommand — registers all 15 hooks in `~/.claude/settings.json` natively in Go
+
+### Changed
+
+- Remove Python dependency from installer and Makefile — hook registration now uses Go `hook-client install-hooks` with atomic file writes
 
 ### Fixed
 

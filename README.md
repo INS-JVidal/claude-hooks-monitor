@@ -293,7 +293,7 @@ claude-hooks-monitor/
 
 **Hooks don't fire:**
 - Verify Claude sees them: run `/hooks` inside Claude Code
-- Check settings.json: `cat .claude/settings.json | python3 -m json.tool`
+- Check settings.json: `cat .claude/settings.json | jq .`
 
 **Hook fires but no event in monitor:**
 - Is the monitor running? `make check`

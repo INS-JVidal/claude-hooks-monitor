@@ -13,13 +13,13 @@ Detailed installation instructions for all platforms. For a quick start, see the
 
 > **Note:** The installer downloads precompiled binaries by default. Go is only required if you build from source (`BUILD_FROM_SOURCE=1`) or if the binary download fails.
 
-**Optional (for test suite and alternative hook script):**
+**Optional (for test suite):**
 
 | Tool | Purpose | Install Link |
 |------|---------|-------------|
-| **Python** | 3.11+ — Alternative hook script | [python.org](https://www.python.org/downloads/) |
-| **uv** | Python dependency management | [docs.astral.sh/uv](https://docs.astral.sh/uv/) |
 | **jq** | JSON processing (tests) | [jqlang.github.io/jq](https://jqlang.github.io/jq/) |
+
+> **Note:** Python is **not** required. Hook registration in `~/.claude/settings.json` is handled natively by the Go `hook-client install-hooks` subcommand.
 
 ---
 
@@ -79,7 +79,7 @@ Safe to run multiple times — if the repo already exists, it does `git pull` an
 
 ### Ubuntu / Debian
 
-**Option A — Use the setup script** (installs Go, Python, uv, jq, git, make):
+**Option A — Use the setup script** (installs Go, jq, git, make):
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/INS-JVidal/claude-hooks-monitor/main/setup.sh | bash
@@ -304,16 +304,6 @@ chmod +x hooks/hook-client
 make build-hook-client
 ```
 
-### "uv: command not found"
-
-uv is only needed for the Python hook script alternative. If you're using the Go hook-client (default), you can ignore this.
-
-To install uv:
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source ~/.bashrc
-```
-
 ### Windows-specific issues
 
 - **`.exe` extension:** All binaries need the `.exe` extension on Windows. If `make build` doesn't add it, build manually: `go build -o bin\monitor.exe .`
@@ -356,13 +346,10 @@ rm -f ~/.claude/commands/monitor-hooks.md
 rm -rf ~/claude-hooks-monitor   # or wherever you installed it
 ```
 
-If you used `setup.sh` to install system dependencies (Go, Python, etc.), those remain installed system-wide. Remove them individually if desired:
+If you used `setup.sh` to install system dependencies (Go, etc.), those remain installed system-wide. Remove them individually if desired:
 
 ```bash
 # Remove Go
 sudo rm -rf /usr/local/go
 # Remove the PATH export from ~/.bashrc
-
-# Remove uv
-rm -rf ~/.cargo/bin/uv ~/.cargo/bin/uvx
 ```

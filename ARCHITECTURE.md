@@ -269,19 +269,39 @@ claude-hooks-monitor/
   └────────────────────────────────────────────────────────────┘
 
   ┌──────────────────────┐
-  │  cmd/hook-client/main │  (standalone — no internal/ imports,
-  │     (package main)    │   only stdlib + hooks/hook_monitor.conf)
+  │  cmd/hook-client/main │  (imports internal/config for
+  │     (package main)    │   AllHookTypes + AtomicWriteFile)
   └──────────────────────┘
 ```
 
 **Key design constraint:** Go's `internal/` directory provides compiler-enforced
 encapsulation. No external module can import any `internal/` package. The two
-binaries (`cmd/monitor` and `cmd/hook-client`) share only the config file format,
-not Go code — `hook-client` is deliberately dependency-free for minimal binary size.
+binaries (`cmd/monitor` and `cmd/hook-client`) share the `internal/config` package
+for hook type definitions and atomic file writes. The `hook-client` also provides
+an `install-hooks` subcommand that registers all hooks in `~/.claude/settings.json`
+— eliminating the previous Python dependency for installation.
 
 ---
 
 ## Hook Client (cmd/hook-client)
+
+### Subcommand Dispatch
+
+```
+                    ┌─────────┐
+                    │  START  │
+                    └────┬────┘
+                         │
+                         ▼
+               ┌───────────────────┐
+               │ os.Args[1] ==     │       ┌─────────────────────┐
+               │ "install-hooks"?  │──yes─▶│ runInstallHooks()   │
+               └────────┬──────────┘       │ Read/write          │
+                        │ no               │ ~/.claude/settings  │
+                        ▼                  │ .json via           │
+                (normal hook flow)         │ config.AtomicWrite  │
+                                           └─────────────────────┘
+```
 
 ### State Machine: Request Processing
 

@@ -67,19 +67,19 @@ test: ## Run full test suite (requires running server)
 
 test-api: ## Test API endpoints with curl
 	@echo "Health:"
-	@curl -sf http://localhost:$(PORT)/health | python3 -m json.tool
+	@curl -sf http://localhost:$(PORT)/health | jq .
 	@echo ""
 	@echo "Stats:"
-	@curl -sf http://localhost:$(PORT)/stats | python3 -m json.tool
+	@curl -sf http://localhost:$(PORT)/stats | jq .
 	@echo ""
 	@echo "Last 3 events:"
-	@curl -sf "http://localhost:$(PORT)/events?limit=3" | python3 -m json.tool
+	@curl -sf "http://localhost:$(PORT)/events?limit=3" | jq .
 
 send-test-hook: ## Send a single test event
 	@curl -s -X POST http://localhost:$(PORT)/hook/PreToolUse \
 		-H "Content-Type: application/json" \
 		-d '{"hook_event_name":"PreToolUse","session_id":"manual","cwd":"/tmp","permission_mode":"default","tool_name":"Bash","tool_input":{"command":"echo hello"}}' \
-		| python3 -m json.tool
+		| jq .
 
 clean: ## Remove build artifacts and logs
 	rm -rf bin/
@@ -128,7 +128,7 @@ check: ## Check if server is running
 		|| echo "Server is NOT running on port $(PORT)"
 
 stats: ## Show hook statistics
-	@curl -sf http://localhost:$(PORT)/stats | python3 -m json.tool
+	@curl -sf http://localhost:$(PORT)/stats | jq .
 
 show-config: ## Display current hook toggle state
 	@echo ""

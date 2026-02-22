@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-02-22
+
+### Fixed
+
+- Critical: no-make fallback built monitor from `.` instead of `./cmd/monitor`
+- Installer now falls back to source build if binary installation fails
+- `register_global_hooks` now shows accurate message (registered vs already present)
+- Makefile `install-hooks` target now propagates errors instead of silently swallowing them
+- Local slash command missing project-level config override (synced with global version)
+- Local slash command referenced wrong project name (`hooks4claude` → `claude-hooks-monitor`)
+- Stale version number in EXAMPLES.md banner
+
 ## [0.4.5] - 2026-02-22
 
 ### Added
@@ -102,7 +114,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Efficiency issues in monitor server and hook client
 - Reduce default hook-client timeout from 5s to 2s
 
-[Unreleased]: https://github.com/anthropics/claude-hooks-monitor/compare/v0.4.5...HEAD
+[Unreleased]: https://github.com/anthropics/claude-hooks-monitor/compare/v0.4.6...HEAD
+[0.4.6]: https://github.com/anthropics/claude-hooks-monitor/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/anthropics/claude-hooks-monitor/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/anthropics/claude-hooks-monitor/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/anthropics/claude-hooks-monitor/compare/v0.4.2...v0.4.3

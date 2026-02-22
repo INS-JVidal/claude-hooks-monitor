@@ -448,7 +448,7 @@ build_project() {
     else
         info "make not found — building with go build directly..."
         mkdir -p "$INSTALL_DIR/bin"
-        (cd "$INSTALL_DIR" && go build -ldflags="-s -w" -o bin/monitor .)
+        (cd "$INSTALL_DIR" && go build -ldflags="-s -w" -o bin/monitor ./cmd/monitor)
         (cd "$INSTALL_DIR" && go build -ldflags="-s -w" -o hooks/hook-client ./cmd/hook-client)
     fi
     ok "Build complete"
@@ -496,11 +496,14 @@ check_path_includes_local_bin() {
 
 register_global_hooks() {
     mkdir -p "$HOME/.claude"
-    "$INSTALL_DIR/hooks/hook-client" install-hooks && \
-        ok "Hooks registered in ~/.claude/settings.json" || {
+    local output
+    output=$("$INSTALL_DIR/hooks/hook-client" install-hooks 2>&1) || {
         warn "Failed to register hooks in ~/.claude/settings.json"
         echo "  Run 'make install-hooks' from the repo to register hooks later."
+        return 0
     }
+    # Show the actual message from hook-client (registered vs already present)
+    ok "$output"
 }
 
 install_slash_command() {
@@ -598,7 +601,13 @@ main() {
     echo ""
 
     if [ "$BINARIES_DOWNLOADED" = true ]; then
-        install_binaries
+        install_binaries || {
+            warn "Binary installation failed — falling back to source build"
+            BINARIES_DOWNLOADED=false
+            check_prerequisites
+            echo ""
+            build_project
+        }
     else
         check_prerequisites
         echo ""

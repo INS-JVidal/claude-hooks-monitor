@@ -103,7 +103,7 @@ install: build ## Install binaries + config system-wide
 
 install-hooks: build ## Register hooks in global ~/.claude/settings.json
 	@mkdir -p ~/.claude/commands
-	@./hooks/hook-client install-hooks || echo "Failed to register hooks"
+	@./hooks/hook-client install-hooks
 	@cp scripts/monitor-hooks-global.md ~/.claude/commands/monitor-hooks.md 2>/dev/null && \
 		echo "Installed /monitor-hooks command to ~/.claude/commands/" || true
 

@@ -26,7 +26,12 @@ set -euo pipefail
 XDG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-hooks-monitor"
 if [[ -d "$XDG_DIR" && -f "$XDG_DIR/hook_monitor.conf" ]]; then
     MONITOR_DIR="$XDG_DIR"
-    CONF="$MONITOR_DIR/hook_monitor.conf"
+    # Project-level config override: check $CLAUDE_PROJECT_DIR/.claude/ first
+    if [[ -n "${CLAUDE_PROJECT_DIR:-}" && -f "$CLAUDE_PROJECT_DIR/.claude/hook_monitor.conf" ]]; then
+        CONF="$CLAUDE_PROJECT_DIR/.claude/hook_monitor.conf"
+    else
+        CONF="$MONITOR_DIR/hook_monitor.conf"
+    fi
     LOCK_FILE="$MONITOR_DIR/.monitor-lock"
     PORT_FILE="$MONITOR_DIR/.monitor-port"
 elif [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
@@ -39,7 +44,7 @@ elif [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
     PORT_FILE="$MONITOR_DIR/hooks/.monitor-port"
 else
     echo "Error: No monitor config found." >&2
-    echo "Run 'make install' from the hooks4claude project." >&2
+    echo "Run 'make install' from the claude-hooks-monitor project." >&2
     exit 1
 fi
 

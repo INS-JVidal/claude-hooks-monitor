@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"github.com/mattn/go-runewidth"
 )
 
 const (
@@ -323,8 +325,10 @@ func pad(s string, width int) string {
 	return s + strings.Repeat(" ", width-len(s))
 }
 
-// wrapLines splits s into lines of at most maxWidth characters,
+// wrapLines splits s into lines of at most maxWidth display columns,
 // preserving existing newlines and breaking on spaces.
+// Uses runewidth.StringWidth for correct handling of multi-byte characters
+// (CJK, emoji) that occupy more than one terminal column.
 func wrapLines(s string, maxWidth int) []string {
 	if maxWidth < 10 {
 		maxWidth = 10
@@ -336,17 +340,18 @@ func wrapLines(s string, maxWidth int) []string {
 			continue
 		}
 		for len(paragraph) > 0 {
-			if len(paragraph) <= maxWidth {
+			if runewidth.StringWidth(paragraph) <= maxWidth {
 				result = append(result, paragraph)
 				break
 			}
-			// Find last space within maxWidth.
-			cut := maxWidth
-			if idx := strings.LastIndex(paragraph[:maxWidth], " "); idx > 0 {
-				cut = idx
+			// Find last space within maxWidth display columns.
+			cut := runewidth.Truncate(paragraph, maxWidth, "")
+			cutLen := len(cut)
+			if idx := strings.LastIndex(cut, " "); idx > 0 {
+				cutLen = idx
 			}
-			result = append(result, paragraph[:cut])
-			paragraph = strings.TrimLeft(paragraph[cut:], " ")
+			result = append(result, paragraph[:cutLen])
+			paragraph = strings.TrimLeft(paragraph[cutLen:], " ")
 		}
 	}
 	if len(result) == 0 {

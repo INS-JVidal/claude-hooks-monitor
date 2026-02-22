@@ -189,7 +189,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		if m.detailOpen {
 			m.detailScroll++
-			// Clamped in View() where paneHeight is known.
+			// Clamp to content length to prevent unbounded drift.
+			// renderDetailPane applies final clamping with the actual pane height.
+			if m.detailScroll >= len(m.detailLines) {
+				m.detailScroll = max(0, len(m.detailLines)-1)
+			}
 		} else {
 			if m.cursor < len(m.rows)-1 {
 				m.cursor++

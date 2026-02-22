@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"claude-hooks-monitor/internal/config"
 	"claude-hooks-monitor/internal/hookevt"
 	"claude-hooks-monitor/internal/monitor"
 	"claude-hooks-monitor/internal/platform"
@@ -121,7 +122,7 @@ func main() {
 
 	// Write port file atomically (temp + rename) so hook-client never reads
 	// a partial or empty file during the brief write window.
-	if err := atomicWriteFile(portFile, []byte(strconv.Itoa(actualPort)), 0600); err != nil {
+	if err := config.AtomicWriteFile(portFile, []byte(strconv.Itoa(actualPort)), 0600); err != nil {
 		if !*uiMode {
 			color.New(color.FgYellow).Printf("  Warning: could not write port file %s: %v\n", portFile, err)
 		}
@@ -215,38 +216,3 @@ func printBanner(port, numHooks int) {
 	fmt.Println()
 }
 
-// atomicWriteFile writes data to a temp file and renames it to the target path.
-// Readers never see a partial file — they get either the old content or the new.
-func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp.*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return err
-	}
-	if err := tmp.Chmod(perm); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	// Rename is atomic on the same filesystem (POSIX guarantee).
-	if err := os.Rename(tmpName, path); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	return nil
-}

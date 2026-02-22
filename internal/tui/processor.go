@@ -60,11 +60,13 @@ func (p *EventProcessor) Process(event hookevt.HookEvent) (sessions []*Session) 
 func (p *EventProcessor) handleSessionStart(event hookevt.HookEvent) {
 	sid := strVal(event.Data, "session_id")
 
-	// Clear stale pending Pre entries from any previous session that ended
-	// abnormally (no SessionEnd fired, e.g. SIGKILL). Without this, stale
-	// entries leak across sessions and cause wrong Pre/Post pairings.
-	for k := range p.pendingPre {
-		delete(p.pendingPre, k)
+	// Only clear stale pending Pre entries when the previous session has
+	// already ended (currentSession == nil). This avoids wiping unmatched
+	// Pre events belonging to a concurrent session that is still active.
+	if p.currentSession == nil {
+		for k := range p.pendingPre {
+			delete(p.pendingPre, k)
+		}
 	}
 
 	// Check if session already exists (e.g., reconnect).
@@ -169,11 +171,18 @@ func (p *EventProcessor) handleGenericEvent(event hookevt.HookEvent) {
 		} else if p.currentSession != nil {
 			// Orphaned Post within an active session — add as standalone.
 			p.appendToCurrentRequest(node, event.Timestamp)
+		} else {
+			// No active session — count as dropped rather than silently discarding.
+			p.dropped.Add(1)
 		}
-		// If currentSession is nil (post-SessionEnd late arrival), discard
-		// the orphaned Post rather than creating a phantom "(default)" session.
 
 	default:
+		// Discard late-arriving events when no session is active to prevent
+		// creating phantom "(default)" sessions after SessionEnd.
+		if p.currentSession == nil {
+			p.dropped.Add(1)
+			return
+		}
 		p.appendToCurrentRequest(node, event.Timestamp)
 	}
 }

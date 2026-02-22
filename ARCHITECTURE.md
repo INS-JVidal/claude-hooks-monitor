@@ -97,7 +97,6 @@ claude-hooks-monitor/
 │       └── styles.go                # Lipgloss styles, row rendering
 ├── hooks/
 │   ├── hook-client[.exe]            # Compiled client binary (gitignored)
-│   ├── hook_monitor.py              # Alternative Python hook script
 │   ├── hook_monitor.conf            # Toggle: enable/disable individual hooks
 │   ├── .monitor-port                # Runtime: port file (gitignored)
 │   └── .monitor-lock                # Runtime: lock file (gitignored)

@@ -272,8 +272,7 @@ claude-hooks-monitor/
 │   └── tui/                        # Bubble Tea UI (model, tree, processor, styles)
 ├── hooks/
 │   ├── hook-client                 # Compiled forwarder binary
-│   ├── hook_monitor.conf           # Hook toggle config
-│   └── hook_monitor.py             # Alternative Python forwarder (optional)
+│   └── hook_monitor.conf           # Hook toggle config
 ├── .claude/
 │   ├── commands/monitor-hooks.md   # /monitor-hooks slash command
 │   └── settings.json               # Hook wiring + permissions

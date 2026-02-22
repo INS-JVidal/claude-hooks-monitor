@@ -2,14 +2,14 @@
 # test-hooks.sh — Test all hook types against the monitor server.
 #
 # Phase 1: Direct curl → server (tests all 15 hook endpoints)
-# Phase 2: End-to-end stdin → Python script → server
+# Phase 2: End-to-end stdin → hook-client (Go) → server
 # Phase 3: Config toggle — verify disabling a hook skips it
 set -euo pipefail
 
 PORT="${PORT:-8080}"
 BASE="http://localhost:${PORT}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOOK_SCRIPT="${SCRIPT_DIR}/hooks/hook_monitor.py"
+HOOK_CLIENT="${SCRIPT_DIR}/hooks/hook-client"
 HOOK_CONF="${SCRIPT_DIR}/hooks/hook_monitor.conf"
 
 # Colors
@@ -177,36 +177,36 @@ send_hook "SessionEnd" '{
 echo ""
 
 # =========================================================================
-# Phase 2: End-to-end test — stdin → Python script → server
+# Phase 2: End-to-end test — stdin → hook-client (Go) → server
 # =========================================================================
-echo -e "${CYAN}─── Phase 2: End-to-end test (Python script → server) ───${NC}"
+echo -e "${CYAN}─── Phase 2: End-to-end test (hook-client → server) ───${NC}"
 echo ""
 
-if [ ! -x "$HOOK_SCRIPT" ]; then
-    fail "hook_monitor.py is not executable"
+if [ ! -x "$HOOK_CLIENT" ]; then
+    fail "hook-client is not executable at ${HOOK_CLIENT}"
 else
     # Get current event count before e2e test
     count_before=$(curl -sf "${BASE}/stats" | python3 -c "import sys,json; print(json.load(sys.stdin).get('total_hooks',0))" 2>/dev/null || echo 0)
 
-    # Pipe a test payload through the Python script
-    info "Piping test payload through hook_monitor.py..."
+    # Pipe a test payload through the Go hook-client
+    info "Piping test payload through hook-client..."
     export HOOK_MONITOR_URL="${BASE}"
     stdout_bytes=$(echo '{"hook_event_name":"PreToolUse","session_id":"e2e-test","cwd":"/tmp","permission_mode":"default","tool_name":"Bash","tool_input":{"command":"echo e2e"}}' \
-        | "$HOOK_SCRIPT" | wc -c)
+        | "$HOOK_CLIENT" | wc -c)
 
     sleep 0.5
 
     # Verify no stdout
     if [ "$stdout_bytes" -eq 0 ]; then
-        ok "Python script produced no stdout"
+        ok "hook-client produced no stdout"
     else
-        fail "Python script produced ${stdout_bytes} bytes on stdout"
+        fail "hook-client produced ${stdout_bytes} bytes on stdout"
     fi
 
     # Verify event reached server
     count_after=$(curl -sf "${BASE}/stats" | python3 -c "import sys,json; print(json.load(sys.stdin).get('total_hooks',0))" 2>/dev/null || echo 0)
     if [ "$count_after" -gt "$count_before" ]; then
-        ok "Event reached server via Python script"
+        ok "Event reached server via hook-client"
     else
         fail "Event did not reach server (before=${count_before}, after=${count_after})"
     fi
@@ -236,9 +236,9 @@ stats = json.load(sys.stdin).get('stats', {})
 print(stats.get('PreToolUse', 0))
 " 2>/dev/null || echo 0)
 
-    # Send a PreToolUse event through the Python script
+    # Send a PreToolUse event through the hook-client (should be skipped)
     echo '{"hook_event_name":"PreToolUse","session_id":"toggle-test","cwd":"/tmp","permission_mode":"default","tool_name":"Test","tool_input":{"cmd":"noop"}}' \
-        | "$HOOK_SCRIPT" 2>/dev/null
+        | HOOK_MONITOR_URL="${BASE}" "$HOOK_CLIENT" 2>/dev/null
 
     sleep 0.5
 

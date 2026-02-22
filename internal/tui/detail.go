@@ -6,8 +6,10 @@ import (
 )
 
 const (
-	labelWidth     = 12 // Column width for "Key:" alignment.
+	labelWidth      = 12 // Column width for "Key:" alignment.
 	maxContentLines = 10 // Limit for long content fields before truncation.
+	maxMapKeys      = 50 // Cap rendered keys in nested maps to prevent memory spikes.
+	maxTopLevelKeys = 100 // Cap rendered top-level data keys.
 )
 
 // formatNodeDetail returns human-readable lines for any tree node.
@@ -217,7 +219,11 @@ func formatRemainingData(data map[string]interface{}, wrapWidth int) []string {
 	sortStrings(keys)
 
 	var lines []string
-	for _, k := range keys {
+	for i, k := range keys {
+		if i >= maxTopLevelKeys {
+			lines = append(lines, paneSectionStyle.Render(fmt.Sprintf("... (%d more keys)", len(keys)-i)))
+			break
+		}
 		lines = append(lines, formatValue(k, data[k], wrapWidth)...)
 	}
 	return lines
@@ -234,7 +240,11 @@ func formatValue(key string, val interface{}, wrapWidth int) []string {
 			subKeys = append(subKeys, sk)
 		}
 		sortStrings(subKeys)
-		for _, sk := range subKeys {
+		for i, sk := range subKeys {
+			if i >= maxMapKeys {
+				lines = append(lines, "  "+paneSectionStyle.Render(fmt.Sprintf("... (%d more keys)", len(subKeys)-i)))
+				break
+			}
 			s := fmt.Sprintf("%v", v[sk])
 			if strings.Contains(s, "\n") || len(s) > wrapWidth {
 				lines = append(lines, "  "+paneLabelStyle.Render(pad(sk+":", labelWidth))+" ")

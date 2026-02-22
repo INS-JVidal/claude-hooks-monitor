@@ -57,7 +57,7 @@ type Model struct {
 func NewModel(ctx context.Context, eventCh chan hookevt.HookEvent, port int, dropped *atomic.Int64) Model {
 	return Model{
 		ctx:        ctx,
-		processor:  NewEventProcessor(),
+		processor:  NewEventProcessor(dropped),
 		eventCh:    eventCh,
 		port:       port,
 		autoScroll: true,

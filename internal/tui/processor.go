@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"claude-hooks-monitor/internal/hookevt"
@@ -21,13 +22,15 @@ type EventProcessor struct {
 	currentSession *Session
 	currentRequest *UserRequest
 	pendingPre     map[string][]*EventNode // pairKey → queue of unmatched Pre events (FIFO)
+	dropped        *atomic.Int64           // shared counter for all event discard paths
 }
 
 // NewEventProcessor returns an initialized processor.
-func NewEventProcessor() *EventProcessor {
+func NewEventProcessor(dropped *atomic.Int64) *EventProcessor {
 	return &EventProcessor{
 		sessionMap: make(map[string]*Session),
 		pendingPre: make(map[string][]*EventNode),
+		dropped:    dropped,
 	}
 }
 
@@ -147,6 +150,7 @@ func (p *EventProcessor) handleGenericEvent(event hookevt.HookEvent) {
 			evicted := queue[0]
 			evicted.Evicted = true
 			queue = queue[1:]
+			p.dropped.Add(1)
 		}
 		p.pendingPre[pairKey] = append(queue, node)
 		p.appendToCurrentRequest(node, event.Timestamp)

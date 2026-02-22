@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -11,6 +13,8 @@ import (
 	"claude-hooks-monitor/internal/hookevt"
 	"claude-hooks-monitor/internal/monitor"
 )
+
+const maxJSONDepth = 100 // Reject payloads nested deeper than this.
 
 // SecurityHeaders adds standard security response headers to every response.
 func SecurityHeaders(next http.Handler) http.Handler {
@@ -56,6 +60,10 @@ func HandleHook(mon *monitor.HookMonitor, hookType string) http.HandlerFunc {
 
 		var data map[string]interface{}
 		if len(body) > 0 {
+			if err := checkJSONDepth(body, maxJSONDepth); err != nil {
+				http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+				return
+			}
 			if err := json.Unmarshal(body, &data); err != nil {
 				http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
 				return
@@ -174,6 +182,29 @@ func cloneSlice(s []interface{}) []interface{} {
 		}
 	}
 	return out
+}
+
+// checkJSONDepth scans raw JSON tokens to reject payloads that exceed maxDepth
+// nesting levels. This prevents stack exhaustion during json.Unmarshal and the
+// subsequent recursive cloneMap/cloneSlice calls.
+func checkJSONDepth(data []byte, maxDepth int) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	depth := 0
+	for {
+		t, err := dec.Token()
+		if err != nil {
+			return nil // io.EOF or parse error — let Unmarshal handle it
+		}
+		switch t {
+		case json.Delim('{'), json.Delim('['):
+			depth++
+			if depth > maxDepth {
+				return fmt.Errorf("JSON nesting exceeds maximum depth of %d", maxDepth)
+			}
+		case json.Delim('}'), json.Delim(']'):
+			depth--
+		}
+	}
 }
 
 // HandleHealth returns a simple health check response.

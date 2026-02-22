@@ -144,6 +144,8 @@ func isHookEnabled(configPath, hookName string) bool {
 	content = strings.TrimPrefix(content, "\xef\xbb\xbf")
 
 	inHooksSection := false
+	found := false
+	foundVal := ""
 	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimSpace(line)
 
@@ -177,11 +179,16 @@ func isHookEnabled(configPath, hookName string) bool {
 		}
 
 		// Case-insensitive key match (e.g. "pretooluse" matches "PreToolUse").
+		// Use last-wins semantics for duplicate keys (matches Bash parser behaviour).
 		if strings.EqualFold(key, hookName) {
-			return !strings.EqualFold(val, "no")
+			found = true
+			foundVal = val
 		}
 	}
 
+	if found {
+		return !strings.EqualFold(foundVal, "no")
+	}
 	return true // not found → enabled
 }
 

@@ -1,22 +1,31 @@
 #!/bin/bash
 #
-# Claude Code Hooks Monitor — Installer (builds from source)
+# Claude Code Hooks Monitor — Installer (downloads precompiled binaries)
 # Usage: curl -sSL https://raw.githubusercontent.com/INS-JVidal/claude-hooks-monitor/main/install.sh | bash
 #
-# Requires: Go (>= 1.21), Git. Make is optional (used by `make run`, not by this script).
+# Downloads precompiled binaries from GitHub Releases by default.
+# Falls back to building from source if download fails.
+#
+# Requires: Git, curl or wget.
+# Go (>= 1.24) is only needed for source builds.
 # On macOS with Homebrew, missing dependencies are installed automatically.
 #
 # Environment variables:
-#   INSTALL_DIR  — where to clone the repo (default: ~/claude-hooks-monitor)
+#   INSTALL_DIR        — where to clone the repo (default: ~/claude-hooks-monitor)
+#   VERSION            — pin a specific release (e.g. v0.4.3; default: latest)
+#   BUILD_FROM_SOURCE  — set to 1 to skip binary download and build from source
 #
 
 set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────────────
 REPO_URL="https://github.com/INS-JVidal/claude-hooks-monitor.git"
+GITHUB_REPO="INS-JVidal/claude-hooks-monitor"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/claude-hooks-monitor}"
-MIN_GO_VERSION="1.21"
+MIN_GO_VERSION="1.24"
 SETUP_SH_URL="https://raw.githubusercontent.com/INS-JVidal/claude-hooks-monitor/main/setup.sh"
+BINARIES_DOWNLOADED=false
+TEMP_DIR=""
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -50,6 +59,14 @@ extract_version() {
     echo "$1" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n 1
 }
 
+# Clean up temp dir on exit (covers ctrl-c, errors, normal exit)
+cleanup_temp() {
+    if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
+        rm -rf "$TEMP_DIR"
+    fi
+}
+trap cleanup_temp EXIT
+
 # ── Argument parsing ────────────────────────────────────────────────────────
 
 parse_args() {
@@ -58,10 +75,14 @@ parse_args() {
             --help|-h)
                 echo "Usage: install.sh"
                 echo ""
-                echo "Clones the repository and builds from source."
-                echo "Requires Go (>= $MIN_GO_VERSION) and Git."
+                echo "Downloads precompiled binaries from GitHub Releases."
+                echo "Falls back to building from source if download fails."
+                echo "Requires Git and curl or wget."
                 echo ""
-                echo "Set INSTALL_DIR to customize the install location (default: ~/claude-hooks-monitor)."
+                echo "Environment variables:"
+                echo "  INSTALL_DIR=<path>    Install location (default: ~/claude-hooks-monitor)"
+                echo "  VERSION=<tag>         Pin a release version (e.g. v0.4.3; default: latest)"
+                echo "  BUILD_FROM_SOURCE=1   Skip binary download, build from source (requires Go >= $MIN_GO_VERSION)"
                 exit 0
                 ;;
             *)
@@ -78,6 +99,7 @@ detect_platform() {
     os="$(uname -s)"
     case "$os" in
         Linux)
+            GOOS="linux"
             if [ -f /etc/os-release ]; then
                 # shellcheck disable=SC1091
                 . /etc/os-release
@@ -92,12 +114,176 @@ detect_platform() {
             fi
             ;;
         Darwin)
+            GOOS="darwin"
             PLATFORM="macos"
             ;;
         *)
+            GOOS="unknown"
             PLATFORM="unknown"
             ;;
     esac
+}
+
+detect_arch() {
+    local machine
+    machine="$(uname -m)"
+    case "$machine" in
+        x86_64)         GOARCH="amd64" ;;
+        aarch64|arm64)  GOARCH="arm64" ;;
+        i386|i686)      GOARCH="386"   ;;
+        *)              GOARCH="unknown" ;;
+    esac
+}
+
+# ── Binary download ─────────────────────────────────────────────────────────
+
+download_binaries() {
+    # Skip if user explicitly wants source build
+    if [ "${BUILD_FROM_SOURCE:-0}" = "1" ]; then
+        info "BUILD_FROM_SOURCE=1 — skipping binary download"
+        return 0
+    fi
+
+    # Need curl or wget
+    if ! command_exists curl && ! command_exists wget; then
+        warn "Neither curl nor wget available — falling back to source build"
+        return 0
+    fi
+
+    # Can't download for unknown platform/arch
+    if [ "$GOOS" = "unknown" ] || [ "$GOARCH" = "unknown" ]; then
+        warn "Unknown platform ($GOOS/$GOARCH) — falling back to source build"
+        return 0
+    fi
+
+    info "Attempting to download precompiled binaries..."
+
+    # Resolve version
+    local version=""
+    if [ -n "${VERSION:-}" ]; then
+        version="$VERSION"
+    else
+        # Query GitHub API for latest release tag
+        local api_url="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
+        local api_response=""
+        if command_exists curl; then
+            api_response=$(curl -sS --max-time 15 "$api_url" 2>/dev/null) || true
+        else
+            api_response=$(wget -qO- --timeout=15 "$api_url" 2>/dev/null) || true
+        fi
+
+        if [ -n "$api_response" ]; then
+            # Extract tag_name from JSON (avoid jq dependency)
+            version=$(echo "$api_response" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n1 | grep -o '"v[^"]*"' | tr -d '"')
+        fi
+
+        if [ -z "$version" ]; then
+            warn "Could not determine latest release version — falling back to source build"
+            return 0
+        fi
+    fi
+
+    # GoReleaser strips the v prefix from filenames
+    local version_no_v="${version#v}"
+    local archive_name="claude-hooks-monitor_${version_no_v}_${GOOS}_${GOARCH}.tar.gz"
+    local base_url="https://github.com/${GITHUB_REPO}/releases/download/${version}"
+    local archive_url="${base_url}/${archive_name}"
+    local checksums_url="${base_url}/checksums.txt"
+
+    info "Version: ${version} (${GOOS}/${GOARCH})"
+
+    # Create temp dir
+    TEMP_DIR=$(mktemp -d)
+
+    # Download archive and checksums
+    local dl_ok=true
+    if command_exists curl; then
+        curl -sSL --max-time 60 --fail -o "${TEMP_DIR}/${archive_name}" "$archive_url" 2>/dev/null || dl_ok=false
+        if [ "$dl_ok" = true ]; then
+            curl -sSL --max-time 30 --fail -o "${TEMP_DIR}/checksums.txt" "$checksums_url" 2>/dev/null || dl_ok=false
+        fi
+    else
+        wget -q --timeout=60 -O "${TEMP_DIR}/${archive_name}" "$archive_url" 2>/dev/null || dl_ok=false
+        if [ "$dl_ok" = true ]; then
+            wget -q --timeout=30 -O "${TEMP_DIR}/checksums.txt" "$checksums_url" 2>/dev/null || dl_ok=false
+        fi
+    fi
+
+    if [ "$dl_ok" != true ]; then
+        warn "Download failed — falling back to source build"
+        return 0
+    fi
+
+    ok "Downloaded ${archive_name}"
+
+    # Verify checksum
+    if command_exists sha256sum; then
+        local expected_checksum
+        expected_checksum=$(grep "$archive_name" "${TEMP_DIR}/checksums.txt" | awk '{print $1}')
+        if [ -z "$expected_checksum" ]; then
+            warn "Archive not found in checksums.txt — falling back to source build"
+            return 0
+        fi
+        local actual_checksum
+        actual_checksum=$(sha256sum "${TEMP_DIR}/${archive_name}" | awk '{print $1}')
+        if [ "$expected_checksum" != "$actual_checksum" ]; then
+            warn "Checksum mismatch — falling back to source build"
+            warn "  expected: ${expected_checksum}"
+            warn "  actual:   ${actual_checksum}"
+            return 0
+        fi
+        ok "Checksum verified"
+    elif command_exists shasum; then
+        # macOS fallback
+        local expected_checksum
+        expected_checksum=$(grep "$archive_name" "${TEMP_DIR}/checksums.txt" | awk '{print $1}')
+        if [ -z "$expected_checksum" ]; then
+            warn "Archive not found in checksums.txt — falling back to source build"
+            return 0
+        fi
+        local actual_checksum
+        actual_checksum=$(shasum -a 256 "${TEMP_DIR}/${archive_name}" | awk '{print $1}')
+        if [ "$expected_checksum" != "$actual_checksum" ]; then
+            warn "Checksum mismatch — falling back to source build"
+            warn "  expected: ${expected_checksum}"
+            warn "  actual:   ${actual_checksum}"
+            return 0
+        fi
+        ok "Checksum verified"
+    else
+        warn "sha256sum/shasum not found — skipping checksum verification"
+    fi
+
+    # Extract to temp dir
+    tar -xzf "${TEMP_DIR}/${archive_name}" -C "${TEMP_DIR}" 2>/dev/null || {
+        warn "Archive extraction failed — falling back to source build"
+        return 0
+    }
+
+    # Verify both binaries exist in the extract
+    if [ ! -f "${TEMP_DIR}/claude-hooks-monitor" ] || [ ! -f "${TEMP_DIR}/hook-client" ]; then
+        warn "Expected binaries not found in archive — falling back to source build"
+        return 0
+    fi
+
+    BINARIES_DOWNLOADED=true
+    ok "Precompiled binaries ready"
+}
+
+# Install downloaded binaries into the repo directory
+install_binaries() {
+    mkdir -p "$INSTALL_DIR/bin"
+
+    # claude-hooks-monitor → bin/monitor
+    cp "${TEMP_DIR}/claude-hooks-monitor" "$INSTALL_DIR/bin/monitor"
+    chmod +x "$INSTALL_DIR/bin/monitor"
+
+    # hook-client → hooks/hook-client
+    mkdir -p "$INSTALL_DIR/hooks"
+    cp "${TEMP_DIR}/hook-client" "$INSTALL_DIR/hooks/hook-client"
+    chmod +x "$INSTALL_DIR/hooks/hook-client"
+
+    ok "Binaries installed to $INSTALL_DIR"
 }
 
 # ── Prerequisite checks ─────────────────────────────────────────────────────
@@ -340,15 +526,23 @@ main() {
     parse_args "$@"
     print_banner
     detect_platform
-    info "Platform: $PLATFORM"
+    detect_arch
+    info "Platform: $PLATFORM ($GOOS/$GOARCH)"
     info "Install directory: $INSTALL_DIR"
     echo ""
 
-    check_prerequisites
+    download_binaries
     echo ""
     clone_or_update
     echo ""
-    build_project
+
+    if [ "$BINARIES_DOWNLOADED" = true ]; then
+        install_binaries
+    else
+        check_prerequisites
+        echo ""
+        build_project
+    fi
     echo ""
     verify_build
 

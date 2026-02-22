@@ -6,11 +6,12 @@ Detailed installation instructions for all platforms. For a quick start, see the
 
 | Tool | Minimum Version | Purpose | Install Link |
 |------|----------------|---------|-------------|
-| **Go** | 1.21+ | Build monitor & hook-client | [go.dev/dl](https://go.dev/dl/) |
 | **Git** | any | Clone the repository | [git-scm.com](https://git-scm.com/) |
+| **curl** or **wget** | any | Download precompiled binaries | (usually pre-installed) |
 | **Make** | any (optional) | Build automation (`make run`, etc.) | (included in build-essential) |
+| **Go** | 1.24+ (optional) | Only needed for source builds | [go.dev/dl](https://go.dev/dl/) |
 
-> **Note:** Make is optional. The installer scripts call `go build` directly if Make is not available.
+> **Note:** The installer downloads precompiled binaries by default. Go is only required if you build from source (`BUILD_FROM_SOURCE=1`) or if the binary download fails.
 
 **Optional (for test suite and alternative hook script):**
 
@@ -26,19 +27,24 @@ Detailed installation instructions for all platforms. For a quick start, see the
 
 ### Linux / macOS
 
-One command to clone and build from source:
+One command to download precompiled binaries and set up:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/INS-JVidal/claude-hooks-monitor/main/install.sh | bash
 ```
 
 The installer:
-1. Detects your platform (Linux distro / macOS)
-2. Checks for Go and Git (on macOS with Homebrew, installs them automatically)
-3. Clones the repository
-4. Builds `monitor` and `hook-client` from source
+1. Detects your platform and architecture (Linux/macOS, amd64/arm64)
+2. Downloads precompiled binaries from GitHub Releases (with checksum verification)
+3. Clones the repository (needed for config files, Makefile, .claude/)
+4. Places binaries in the correct locations
 5. Verifies both binaries exist
 6. Prints next steps
+
+If the binary download fails (e.g., no internet, unsupported platform), the installer falls back to building from source automatically.
+
+To force a source build: `BUILD_FROM_SOURCE=1 curl -sSL ... | bash`
+To pin a version: `VERSION=v0.4.3 curl -sSL ... | bash`
 
 ### Windows
 
@@ -326,7 +332,7 @@ go version
 
 ### "make build fails"
 
-1. **Go version too old:** Check `go version` — need >= 1.21. Reinstall if needed.
+1. **Go version too old:** Check `go version` — need >= 1.24. Reinstall if needed.
 2. **Module issues:** Run `go mod tidy` to resolve dependencies, then `make build`.
 3. **Network issues:** Go needs to download modules on first build. Check your internet connection.
 

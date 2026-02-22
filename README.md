@@ -57,12 +57,12 @@ The monitor also exposes a REST API (`/stats`, `/events`, `/health`) for program
 
 - **Ubuntu** (20.04+ or WSL2)
 - **Claude Code CLI** — latest version
-- **Go** 1.21+ — required to build from source
 - **Git** — required to clone the repository
+- **Go** 1.24+ — only needed for source builds (precompiled binaries are downloaded by default)
 
 ## Installation
 
-**One-line install** (clones and builds from source):
+**One-line install** (downloads precompiled binaries):
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/INS-JVidal/claude-hooks-monitor/main/install.sh | bash
@@ -72,6 +72,20 @@ Custom install location:
 
 ```bash
 INSTALL_DIR=~/projects/hooks-monitor \
+  curl -sSL https://raw.githubusercontent.com/INS-JVidal/claude-hooks-monitor/main/install.sh | bash
+```
+
+Pin a specific version:
+
+```bash
+VERSION=v0.4.3 \
+  curl -sSL https://raw.githubusercontent.com/INS-JVidal/claude-hooks-monitor/main/install.sh | bash
+```
+
+Force build from source (requires Go):
+
+```bash
+BUILD_FROM_SOURCE=1 \
   curl -sSL https://raw.githubusercontent.com/INS-JVidal/claude-hooks-monitor/main/install.sh | bash
 ```
 

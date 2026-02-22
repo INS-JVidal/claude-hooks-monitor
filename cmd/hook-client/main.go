@@ -27,6 +27,7 @@ func main() {
 	// Resolve config path relative to this binary's location.
 	execPath, _ := os.Executable()
 	hookDir := filepath.Dir(execPath)
+	xdgDir := xdgConfigDir()
 
 	timeout := getEnvInt("HOOK_TIMEOUT", 2)
 	if timeout > 10 {
@@ -34,9 +35,9 @@ func main() {
 	}
 
 	config := Config{
-		MonitorURL: discoverMonitorURL(hookDir),
+		MonitorURL: discoverMonitorURL(xdgDir, hookDir),
 		Timeout:    time.Duration(timeout) * time.Second,
-		ConfigPath: filepath.Join(hookDir, "hook_monitor.conf"),
+		ConfigPath: discoverFile("HOOK_MONITOR_CONFIG", "hook_monitor.conf", xdgDir, hookDir),
 	}
 
 	// No monitor URL means we couldn't find a valid target — skip silently.
@@ -195,9 +196,55 @@ func isHookEnabled(configPath, hookName string) bool {
 	return true // not found → enabled
 }
 
+// xdgConfigDir returns the XDG config directory for the monitor.
+// Uses $XDG_CONFIG_HOME if set, otherwise ~/.config/claude-hooks-monitor/.
+func xdgConfigDir() string {
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		base = filepath.Join(home, ".config")
+	}
+	return filepath.Join(base, "claude-hooks-monitor")
+}
+
+// discoverFile locates a config/runtime file using a priority chain:
+//  1. Environment variable override (envKey)
+//  2. XDG config dir (~/.config/claude-hooks-monitor/)
+//  3. Binary-relative directory (legacy/fallback)
+//
+// Returns the first path that exists on disk, or the XDG path as default.
+func discoverFile(envKey, filename, xdgDir, hookDir string) string {
+	// 1. Env var override.
+	if envKey != "" {
+		if p := os.Getenv(envKey); p != "" {
+			return p
+		}
+	}
+	// 2. XDG config dir.
+	if xdgDir != "" {
+		xdgPath := filepath.Join(xdgDir, filename)
+		if _, err := os.Stat(xdgPath); err == nil {
+			return xdgPath
+		}
+	}
+	// 3. Binary-relative (legacy).
+	legacyPath := filepath.Join(hookDir, filename)
+	if _, err := os.Stat(legacyPath); err == nil {
+		return legacyPath
+	}
+	// Default to XDG path (even if it doesn't exist yet — fail-open in isHookEnabled).
+	if xdgDir != "" {
+		return filepath.Join(xdgDir, filename)
+	}
+	return legacyPath
+}
+
 // discoverMonitorURL returns the monitor URL.
-// Priority: HOOK_MONITOR_URL env var → .monitor-port file → skip.
-func discoverMonitorURL(hookDir string) string {
+// Priority: HOOK_MONITOR_URL env var → XDG .monitor-port → binary-relative .monitor-port → skip.
+func discoverMonitorURL(xdgDir, hookDir string) string {
 	if urlStr := os.Getenv("HOOK_MONITOR_URL"); urlStr != "" {
 		u, err := url.Parse(urlStr)
 		if err != nil {
@@ -214,13 +261,20 @@ func discoverMonitorURL(hookDir string) string {
 		return urlStr
 	}
 
-	portFile := filepath.Join(hookDir, ".monitor-port")
-	data, err := os.ReadFile(portFile)
-	if err == nil {
+	// Try port file in priority order: XDG → binary-relative.
+	for _, dir := range []string{xdgDir, hookDir} {
+		if dir == "" {
+			continue
+		}
+		portFile := filepath.Join(dir, ".monitor-port")
+		data, err := os.ReadFile(portFile)
+		if err != nil {
+			continue
+		}
 		port := strings.TrimSpace(string(data))
 		portNum, err := strconv.Atoi(port)
 		if err != nil || portNum < 1 || portNum > 65535 {
-			return "" // invalid port — fail safe
+			continue // invalid port — try next
 		}
 		return "http://localhost:" + port
 	}

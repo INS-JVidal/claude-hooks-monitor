@@ -51,14 +51,24 @@ func main() {
 	flag.Parse()
 
 	// Resolve lock and port file paths.
+	// Default to XDG config dir (~/.config/claude-hooks-monitor/) for system-wide install.
+	// PORT_FILE env var still works as override for backward compatibility.
 	portFile := os.Getenv("PORT_FILE")
 	if portFile == "" {
-		portFile = "hooks/.monitor-port"
-	}
-	// Reject absolute paths or path traversal in PORT_FILE.
-	if filepath.IsAbs(portFile) || strings.Contains(portFile, "..") {
-		fmt.Fprintf(os.Stderr, "Error: PORT_FILE must be a relative path without '..'\n")
-		os.Exit(1)
+		xdgDir := xdgConfigDir()
+		if xdgDir != "" {
+			// Ensure the XDG config directory exists.
+			os.MkdirAll(xdgDir, 0700)
+			portFile = filepath.Join(xdgDir, ".monitor-port")
+		} else {
+			portFile = "hooks/.monitor-port"
+		}
+	} else {
+		// Reject absolute paths or path traversal in PORT_FILE override.
+		if filepath.IsAbs(portFile) || strings.Contains(portFile, "..") {
+			fmt.Fprintf(os.Stderr, "Error: PORT_FILE must be a relative path without '..'\n")
+			os.Exit(1)
+		}
 	}
 	lockFile := strings.TrimSuffix(portFile, ".monitor-port") + ".monitor-lock"
 	configFile := filepath.Join(filepath.Dir(portFile), "hook_monitor.conf")
@@ -200,6 +210,20 @@ func main() {
 		}
 	}
 	// Both paths fall through here → deferred cleanup runs.
+}
+
+// xdgConfigDir returns the XDG config directory for the monitor.
+// Uses $XDG_CONFIG_HOME if set, otherwise ~/.config/claude-hooks-monitor/.
+func xdgConfigDir() string {
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		base = filepath.Join(home, ".config")
+	}
+	return filepath.Join(base, "claude-hooks-monitor")
 }
 
 // printBanner displays the startup banner in console mode.

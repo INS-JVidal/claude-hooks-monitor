@@ -22,13 +22,26 @@ Run the following script. Use `$ARGUMENTS` for the subcommand passed by the user
 set -euo pipefail
 
 # ── Paths ─────────────────────────────────────────────────────────────
-MONITOR_DIR=$(cd "${CLAUDE_PROJECT_DIR:-}" 2>/dev/null && pwd) || {
-    echo "Error: CLAUDE_PROJECT_DIR is not set or does not exist." >&2
+# Priority: XDG config dir (system-wide install) → project-local (legacy).
+XDG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-hooks-monitor"
+if [[ -d "$XDG_DIR" && -f "$XDG_DIR/hook_monitor.conf" ]]; then
+    MONITOR_DIR="$XDG_DIR"
+    CONF="$MONITOR_DIR/hook_monitor.conf"
+    LOCK_FILE="$MONITOR_DIR/.monitor-lock"
+    PORT_FILE="$MONITOR_DIR/.monitor-port"
+elif [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
+    MONITOR_DIR=$(cd "$CLAUDE_PROJECT_DIR" 2>/dev/null && pwd) || {
+        echo "Error: CLAUDE_PROJECT_DIR does not exist." >&2
+        exit 1
+    }
+    CONF="$MONITOR_DIR/hooks/hook_monitor.conf"
+    LOCK_FILE="$MONITOR_DIR/hooks/.monitor-lock"
+    PORT_FILE="$MONITOR_DIR/hooks/.monitor-port"
+else
+    echo "Error: No monitor config found." >&2
+    echo "Run 'make install' from the hooks4claude project." >&2
     exit 1
-}
-CONF="$MONITOR_DIR/hooks/hook_monitor.conf"
-LOCK_FILE="$MONITOR_DIR/hooks/.monitor-lock"
-PORT_FILE="$MONITOR_DIR/hooks/.monitor-port"
+fi
 
 # All 15 valid hook type names (must match config file keys exactly)
 VALID_HOOKS=(

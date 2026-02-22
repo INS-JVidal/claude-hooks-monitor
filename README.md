@@ -51,6 +51,8 @@ Session [a1b2c3d4e5f6]
 
 The monitor also exposes a REST API (`/stats`, `/events`, `/health`) for programmatic access.
 
+![Tree UI showing hook events organized by session, with a detail pane open on a SubagentStart event](images/monitor-hooks-ui.png)
+
 ## Prerequisites
 
 - **Ubuntu** (20.04+ or WSL2)
@@ -171,6 +173,8 @@ A built-in Claude Code slash command for controlling hook monitoring without lea
 ```
 
 Hook names are case-insensitive (e.g. `pretooluse` matches `PreToolUse`). Changes take effect immediately — the hook forwarder reads the config file on every invocation.
+
+![/monitor-hooks activate command showing all 15 hooks enabled, with full output expanded via Ctrl+O](images/monitor-hooks-activate.png)
 
 **Using from a different project:**
 

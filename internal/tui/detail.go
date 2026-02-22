@@ -350,6 +350,13 @@ func wrapLines(s string, maxWidth int) []string {
 			if idx := strings.LastIndex(cut, " "); idx > 0 {
 				cutLen = idx
 			}
+			// Guarantee forward progress: if Truncate returned "" (first rune
+			// wider than maxWidth, e.g. CJK in a very narrow terminal), consume
+			// at least one rune to prevent an infinite loop.
+			if cutLen == 0 {
+				r := []rune(paragraph)
+				cutLen = len(string(r[:1]))
+			}
 			result = append(result, paragraph[:cutLen])
 			paragraph = strings.TrimLeft(paragraph[cutLen:], " ")
 		}

@@ -97,6 +97,21 @@ parse_hooks_section() {
         val="${val%%#*}"
         val=$(trim "$val")
         val="${val,,}"  # lowercase
+        # Normalize key to canonical PascalCase if it matches a known hook
+        # (case-insensitive) — this ensures show_all/set_hook lookups work
+        # even if the user manually edits the config with wrong casing.
+        local key_lower="${key,,}"
+        for _vh in "${VALID_HOOKS[@]}"; do
+            if [[ "${_vh,,}" == "$key_lower" ]]; then
+                key="$_vh"
+                break
+            fi
+        done
+        # Deduplicate: skip if this canonical key was already seen
+        if [[ -v "HOOK_CFG[$key]" ]]; then
+            HOOK_CFG["$key"]="$val"
+            continue
+        fi
         HOOK_CFG["$key"]="$val"
         HOOK_CFG_KEYS+=("$key")
     done < "$CONF"

@@ -81,6 +81,8 @@ func NewHookMonitor(eventCh chan hookevt.HookEvent) *HookMonitor {
 // decoupled from the HTTP handler's local state.
 func (m *HookMonitor) AddEvent(event hookevt.HookEvent) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	m.events = append(m.events, event)
 	// Trim oldest when exceeding max — copy into a fresh slice so the GC
 	// can reclaim the old backing array (avoids the slice-pinning leak).
@@ -95,20 +97,21 @@ func (m *HookMonitor) AddEvent(event hookevt.HookEvent) {
 	// Channel send MUST happen inside the lock to prevent send-on-closed-channel
 	// panic. CloseChannel also acquires this lock before closing, so the send and
 	// close can never race.
-	if m.eventCh != nil && !m.chClosed {
+	switch {
+	case m.eventCh != nil && !m.chClosed:
 		select {
 		case m.eventCh <- event:
 		default:
 			m.Dropped.Add(1)
 		}
-		m.mu.Unlock()
-	} else if m.eventCh == nil {
-		m.mu.Unlock()
+	case m.eventCh == nil:
+		// Console mode — logEvent has its own logMu for serialization.
+		// Holding mu during the fast buffered write has negligible contention
+		// since there is no TUI channel consumer competing for the lock.
 		logEvent(event)
-	} else {
+	default:
 		// Channel is closed (shutdown in progress) — count as dropped.
 		m.Dropped.Add(1)
-		m.mu.Unlock()
 	}
 }
 

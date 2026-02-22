@@ -10,10 +10,17 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-// maxPendingPerKey caps how many unmatched PreToolUse events are queued per
-// pairKey. This prevents unbounded memory growth if Posts never arrive (e.g.
-// tool calls that crash without triggering PostToolUse).
-const maxPendingPerKey = 50
+const (
+	// maxPendingPerKey caps how many unmatched PreToolUse events are queued per
+	// pairKey. This prevents unbounded memory growth if Posts never arrive (e.g.
+	// tool calls that crash without triggering PostToolUse).
+	maxPendingPerKey = 50
+
+	// maxSessions caps total sessions kept in the tree. When exceeded, the
+	// oldest sessions are evicted to bound memory from accumulated event Data
+	// maps that are never released during a long-running TUI session.
+	maxSessions = 50
+)
 
 // EventProcessor groups incoming hook events into the tree data model.
 type EventProcessor struct {
@@ -52,6 +59,13 @@ func (p *EventProcessor) Process(event hookevt.HookEvent) (sessions []*Session) 
 		p.handleUserPrompt(event)
 	default:
 		p.handleGenericEvent(event)
+	}
+
+	// Evict oldest sessions to bound memory from accumulated Data maps.
+	if len(p.sessions) > maxSessions {
+		evict := p.sessions[0]
+		delete(p.sessionMap, evict.ID)
+		p.sessions = p.sessions[1:]
 	}
 
 	return p.sessions
@@ -137,9 +151,14 @@ func (p *EventProcessor) handleGenericEvent(event hookevt.HookEvent) {
 	// Use tool_use_id for Pre/Post pairing when available — this correctly
 	// handles concurrent tool calls of the same type (e.g. two parallel Bash
 	// calls). Falls back to tool_name when tool_use_id is absent.
+	// When both are empty (malformed payload), use a synthetic key to avoid
+	// collisions under the "" map key that would mismatch unrelated events.
 	pairKey := strVal(event.Data, "tool_use_id")
 	if pairKey == "" {
 		pairKey = toolName
+	}
+	if pairKey == "" {
+		pairKey = fmt.Sprintf("_unknown_%d", event.Timestamp.UnixNano())
 	}
 
 	switch event.HookType {
@@ -196,6 +215,7 @@ func (p *EventProcessor) ensureSession(ts time.Time) {
 			Expanded:  true,
 		}
 		p.sessions = append(p.sessions, s)
+		p.sessionMap[s.ID] = s
 		p.currentSession = s
 	}
 }

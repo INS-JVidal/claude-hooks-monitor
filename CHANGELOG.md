@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-02-22
+
 ### Added
 
 - Hook configuration menu in TUI (`H` key) — toggle individual hooks on/off
@@ -100,7 +102,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Efficiency issues in monitor server and hook client
 - Reduce default hook-client timeout from 5s to 2s
 
-[Unreleased]: https://github.com/anthropics/claude-hooks-monitor/compare/v0.4.4...HEAD
+[Unreleased]: https://github.com/anthropics/claude-hooks-monitor/compare/v0.4.5...HEAD
+[0.4.5]: https://github.com/anthropics/claude-hooks-monitor/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/anthropics/claude-hooks-monitor/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/anthropics/claude-hooks-monitor/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/anthropics/claude-hooks-monitor/compare/v0.4.1...v0.4.2

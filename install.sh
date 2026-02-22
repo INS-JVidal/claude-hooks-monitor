@@ -478,6 +478,91 @@ verify_build() {
     fi
 }
 
+# ── System-wide install ──────────────────────────────────────────────────────
+
+check_path_includes_local_bin() {
+    case ":$PATH:" in
+        *":$HOME/.local/bin:"*)
+            ok "~/.local/bin is on PATH"
+            ;;
+        *)
+            warn "~/.local/bin is not on PATH"
+            echo "  Add to your shell profile (~/.bashrc, ~/.zshrc, etc.):"
+            echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+            echo ""
+            ;;
+    esac
+}
+
+register_global_hooks() {
+    if ! command_exists python3; then
+        warn "python3 not found — skipping global hooks registration"
+        echo "  Run 'make install-hooks' from the repo to register hooks later."
+        return 0
+    fi
+
+    if python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if 'hooks' in d else 1)" "$HOME/.claude/settings.json" 2>/dev/null; then
+        ok "Hooks already present in ~/.claude/settings.json"
+        return 0
+    fi
+
+    python3 -c "
+import json, os
+p = os.path.expanduser('~/.claude/settings.json')
+d = json.load(open(p)) if os.path.exists(p) else {}
+hooks = ['SessionStart','SessionEnd','UserPromptSubmit','Notification','PermissionRequest','Stop','SubagentStart','SubagentStop','TeammateIdle','TaskCompleted','ConfigChange','PreCompact']
+matcher_hooks = ['PreToolUse','PostToolUse','PostToolUseFailure']
+h = {}
+for e in hooks:
+    h[e] = [{'hooks': [{'type': 'command', 'command': 'hook-client'}]}]
+for e in matcher_hooks:
+    h[e] = [{'matcher': '*', 'hooks': [{'type': 'command', 'command': 'hook-client'}]}]
+d['hooks'] = h
+json.dump(d, open(p, 'w'), indent=2)
+" && ok "Hooks registered in ~/.claude/settings.json" || {
+        warn "Failed to register hooks in ~/.claude/settings.json"
+        echo "  Run 'make install-hooks' from the repo to register hooks later."
+    }
+}
+
+install_slash_command() {
+    if [ -f "$INSTALL_DIR/scripts/monitor-hooks-global.md" ]; then
+        cp "$INSTALL_DIR/scripts/monitor-hooks-global.md" "$HOME/.claude/commands/monitor-hooks.md"
+        ok "Installed /monitor-hooks command to ~/.claude/commands/"
+    else
+        warn "Global slash command template not found — skipping"
+        echo "  Run 'make install-hooks' from the repo to install it later."
+    fi
+}
+
+install_systemwide() {
+    info "Installing system-wide..."
+    echo ""
+
+    # Binaries → ~/.local/bin/
+    mkdir -p "$HOME/.local/bin"
+    cp "$INSTALL_DIR/bin/monitor" "$HOME/.local/bin/claude-hooks-monitor"
+    cp "$INSTALL_DIR/hooks/hook-client" "$HOME/.local/bin/hook-client"
+    chmod +x "$HOME/.local/bin/claude-hooks-monitor" "$HOME/.local/bin/hook-client"
+    ok "Binaries installed to ~/.local/bin/"
+
+    # Config → ~/.config/claude-hooks-monitor/
+    mkdir -p "$HOME/.config/claude-hooks-monitor"
+    cp -n "$INSTALL_DIR/hooks/hook_monitor.conf" "$HOME/.config/claude-hooks-monitor/" 2>/dev/null || true
+    ok "Config installed to ~/.config/claude-hooks-monitor/"
+
+    # Global hooks → ~/.claude/settings.json
+    mkdir -p "$HOME/.claude/commands"
+    register_global_hooks
+
+    # Slash command → ~/.claude/commands/monitor-hooks.md
+    install_slash_command
+
+    # PATH check
+    echo ""
+    check_path_includes_local_bin
+}
+
 # ── Next steps ───────────────────────────────────────────────────────────────
 
 print_next_steps() {
@@ -488,17 +573,15 @@ print_next_steps() {
     echo ""
     echo -e "${ARROW} ${GREEN}Start the monitor:${NC}"
     echo ""
-    echo "  cd $INSTALL_DIR"
-    echo "  make run          # console mode"
-    echo "  make run-ui       # interactive tree UI"
+    echo "  claude-hooks-monitor            # if ~/.local/bin is on PATH"
+    echo "  claude-hooks-monitor --ui       # interactive tree UI"
     echo ""
-    echo -e "${ARROW} ${GREEN}Configure hooks in your own project:${NC}"
+    echo -e "${ARROW} ${GREEN}Use with Claude Code:${NC}"
     echo ""
-    echo "  cd $INSTALL_DIR"
-    echo "  make show-hooks-config"
+    echo "  Hooks are registered globally — start claude in any project"
+    echo "  and events will appear in the monitor automatically."
     echo ""
-    echo "  Copy the JSON output into your project's .claude/settings.json."
-    echo "  Then start 'claude' in your project — events will appear in the monitor."
+    echo "  Use /monitor-hooks status inside claude to check the setup."
     echo ""
     echo -e "${ARROW} ${GREEN}Test the installation:${NC}"
     echo ""
@@ -545,6 +628,8 @@ main() {
     fi
     echo ""
     verify_build
+    echo ""
+    install_systemwide
 
     print_next_steps
 }

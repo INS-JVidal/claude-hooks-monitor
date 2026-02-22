@@ -120,12 +120,8 @@ d['hooks'] = h; \
 json.dump(d, open(p, 'w'), indent=2); \
 print('Hooks registered in ' + p)" ; \
 	fi
-	@cp .claude/commands/monitor-hooks.md ~/.claude/commands/monitor-hooks-global.md 2>/dev/null && \
-		sed -i 's|MONITOR_DIR=.*|MONITOR_DIR="$$HOME/.config/claude-hooks-monitor"|' ~/.claude/commands/monitor-hooks-global.md && \
-		sed -i 's|CONF=.*hook_monitor.conf.*|CONF="$$MONITOR_DIR/hook_monitor.conf"|' ~/.claude/commands/monitor-hooks-global.md && \
-		sed -i 's|LOCK_FILE=.*\.monitor-lock.*|LOCK_FILE="$$MONITOR_DIR/.monitor-lock"|' ~/.claude/commands/monitor-hooks-global.md && \
-		sed -i 's|PORT_FILE=.*\.monitor-port.*|PORT_FILE="$$MONITOR_DIR/.monitor-port"|' ~/.claude/commands/monitor-hooks-global.md && \
-		echo "Installed /monitor-hooks-global command to ~/.claude/commands/" || true
+	@cp scripts/monitor-hooks-global.md ~/.claude/commands/monitor-hooks.md 2>/dev/null && \
+		echo "Installed /monitor-hooks command to ~/.claude/commands/" || true
 
 install-command: ## Install /monitor-hooks slash command into another project
 	@if [ -z "$(PROJECT)" ]; then \

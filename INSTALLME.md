@@ -39,7 +39,8 @@ The installer:
 3. Clones the repository (needed for config files, Makefile, .claude/)
 4. Places binaries in the correct locations
 5. Verifies both binaries exist
-6. Prints next steps
+6. **Installs system-wide** — copies binaries to `~/.local/bin/`, config to `~/.config/claude-hooks-monitor/`, registers global hooks in `~/.claude/settings.json`, and installs the `/monitor-hooks` slash command
+7. Checks that `~/.local/bin` is on your PATH
 
 If the binary download fails (e.g., no internet, unsupported platform), the installer falls back to building from source automatically.
 
@@ -171,11 +172,31 @@ make build
 
 ## Configuring Claude Code Hooks
 
-After building, you need to tell Claude Code to send hook events to the monitor. There are two scenarios:
+### Automatic setup (recommended)
+
+The `install.sh` script and `make install && make install-hooks` both perform a complete system-wide setup:
+
+- Binaries → `~/.local/bin/claude-hooks-monitor` and `~/.local/bin/hook-client`
+- Config → `~/.config/claude-hooks-monitor/hook_monitor.conf`
+- Global hooks → `~/.claude/settings.json` (uses bare `hook-client` command, found via PATH)
+- Slash command → `~/.claude/commands/monitor-hooks.md`
+
+After installation, hooks fire automatically in **every** Claude Code session — no per-project configuration needed.
+
+```bash
+# Terminal 1: start the monitor
+claude-hooks-monitor
+
+# Terminal 2: work in any project
+cd ~/my-project
+claude    # hooks fire automatically
+```
+
+> **Important:** `~/.local/bin` must be on your PATH for the global hooks to find `hook-client`. The installer checks this and prints instructions if it's missing.
 
 ### Scenario A: Running `claude` inside the monitor project
 
-This works out of the box. The repository includes a `.claude/settings.json` that uses `$CLAUDE_PROJECT_DIR` to find the hook-client relative to the project:
+This works out of the box even without system-wide install. The repository includes a `.claude/settings.json` that uses `$CLAUDE_PROJECT_DIR` to find the hook-client relative to the project:
 
 ```bash
 cd claude-hooks-monitor
@@ -185,9 +206,9 @@ claude          # terminal 2 — hooks fire automatically
 
 No extra configuration needed.
 
-### Scenario B: Monitoring hooks in your own project
+### Scenario B: Manual per-project setup (advanced)
 
-If you want to monitor Claude Code hooks while working on a *different* project, you need to copy the hooks configuration into that project's `.claude/settings.json` with the **absolute path** to the hook-client binary.
+If you prefer not to install system-wide, you can configure hooks for a specific project using absolute paths:
 
 **Step 1:** Generate the config snippet with the correct path:
 
@@ -196,83 +217,9 @@ cd ~/claude-hooks-monitor   # or wherever you installed it
 make show-hooks-config
 ```
 
-This prints a JSON `"hooks"` block with the absolute path to `hooks/hook-client` already filled in.
+**Step 2:** Copy the output into your project's `.claude/settings.json`.
 
-**Step 2:** Copy the output into your project's `.claude/settings.json`:
-
-```bash
-cd ~/my-project
-mkdir -p .claude
-# Create or edit .claude/settings.json and paste the hooks block
-```
-
-**Step 3:** Start the monitor and Claude:
-
-```bash
-# Terminal 1: start the monitor
-cd ~/claude-hooks-monitor
-make run
-
-# Terminal 2: work in your project
-cd ~/my-project
-claude
-```
-
-### Full `.claude/settings.json` example
-
-Below is a complete example. Replace `/home/you/claude-hooks-monitor` with your actual install path:
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      { "hooks": [{ "type": "command", "command": "\"/home/you/claude-hooks-monitor/hooks/hook-client\"" }] }
-    ],
-    "SessionEnd": [
-      { "hooks": [{ "type": "command", "command": "\"/home/you/claude-hooks-monitor/hooks/hook-client\"" }] }
-    ],
-    "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "\"/home/you/claude-hooks-monitor/hooks/hook-client\"" }] }
-    ],
-    "PreToolUse": [
-      { "matcher": "*", "hooks": [{ "type": "command", "command": "\"/home/you/claude-hooks-monitor/hooks/hook-client\"" }] }
-    ],
-    "PostToolUse": [
-      { "matcher": "*", "hooks": [{ "type": "command", "command": "\"/home/you/claude-hooks-monitor/hooks/hook-client\"" }] }
-    ],
-    "PostToolUseFailure": [
-      { "matcher": "*", "hooks": [{ "type": "command", "command": "\"/home/you/claude-hooks-monitor/hooks/hook-client\"" }] }
-    ],
-    "Notification": [
-      { "hooks": [{ "type": "command", "command": "\"/home/you/claude-hooks-monitor/hooks/hook-client\"" }] }
-    ],
-    "PermissionRequest": [
-      { "hooks": [{ "type": "command", "command": "\"/home/you/claude-hooks-monitor/hooks/hook-client\"" }] }
-    ],
-    "Stop": [
-      { "hooks": [{ "type": "command", "command": "\"/home/you/claude-hooks-monitor/hooks/hook-client\"" }] }
-    ],
-    "SubagentStart": [
-      { "hooks": [{ "type": "command", "command": "\"/home/you/claude-hooks-monitor/hooks/hook-client\"" }] }
-    ],
-    "SubagentStop": [
-      { "hooks": [{ "type": "command", "command": "\"/home/you/claude-hooks-monitor/hooks/hook-client\"" }] }
-    ],
-    "TeammateIdle": [
-      { "hooks": [{ "type": "command", "command": "\"/home/you/claude-hooks-monitor/hooks/hook-client\"" }] }
-    ],
-    "TaskCompleted": [
-      { "hooks": [{ "type": "command", "command": "\"/home/you/claude-hooks-monitor/hooks/hook-client\"" }] }
-    ],
-    "ConfigChange": [
-      { "hooks": [{ "type": "command", "command": "\"/home/you/claude-hooks-monitor/hooks/hook-client\"" }] }
-    ],
-    "PreCompact": [
-      { "hooks": [{ "type": "command", "command": "\"/home/you/claude-hooks-monitor/hooks/hook-client\"" }] }
-    ]
-  }
-}
-```
+**Step 3:** Start the monitor and Claude in separate terminals.
 
 ### How `$CLAUDE_PROJECT_DIR` works
 
@@ -282,7 +229,7 @@ When Claude Code runs, it sets the `CLAUDE_PROJECT_DIR` environment variable to 
 "command": "\"$CLAUDE_PROJECT_DIR\"/hooks/hook-client"
 ```
 
-This only works when Claude is running *inside* the monitor project. For external projects, use the absolute path as shown above.
+This only works when Claude is running *inside* the monitor project. The system-wide install avoids this limitation by placing `hook-client` on PATH.
 
 ---
 
@@ -397,12 +344,16 @@ source ~/.bashrc
 ## Uninstalling
 
 ```bash
+# Remove system-wide components
+rm -f ~/.local/bin/claude-hooks-monitor ~/.local/bin/hook-client
+rm -rf ~/.config/claude-hooks-monitor
+rm -f ~/.claude/commands/monitor-hooks.md
+
+# Remove hooks from global settings
+# Edit ~/.claude/settings.json and delete the "hooks" block
+
 # Remove the project
 rm -rf ~/claude-hooks-monitor   # or wherever you installed it
-
-# Remove hooks from your project's .claude/settings.json
-# Edit the file and delete the "hooks" block, or delete the whole file
-rm .claude/settings.json
 ```
 
 If you used `setup.sh` to install system dependencies (Go, Python, etc.), those remain installed system-wide. Remove them individually if desired:

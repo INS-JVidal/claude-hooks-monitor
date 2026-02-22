@@ -101,25 +101,9 @@ install: build ## Install binaries + config system-wide
 	@echo ""
 	@echo "  Run 'make install-hooks' to register hooks in ~/.claude/settings.json"
 
-install-hooks: ## Register hooks in global ~/.claude/settings.json
+install-hooks: build ## Register hooks in global ~/.claude/settings.json
 	@mkdir -p ~/.claude/commands
-	@if [ -f ~/.claude/settings.json ] && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if 'hooks' in d else 1)" ~/.claude/settings.json 2>/dev/null; then \
-		echo "Hooks already present in ~/.claude/settings.json — skipping."; \
-		echo "To reinstall, remove the 'hooks' key first."; \
-	else \
-		python3 -c "\
-import json, sys, os; \
-p = os.path.expanduser('~/.claude/settings.json'); \
-d = json.load(open(p)) if os.path.exists(p) else {}; \
-hooks = ['SessionStart','SessionEnd','UserPromptSubmit','Notification','PermissionRequest','Stop','SubagentStart','SubagentStop','TeammateIdle','TaskCompleted','ConfigChange','PreCompact']; \
-matcher_hooks = ['PreToolUse','PostToolUse','PostToolUseFailure']; \
-h = {}; \
-[h.__setitem__(e, [{'hooks': [{'type': 'command', 'command': 'hook-client'}]}]) for e in hooks]; \
-[h.__setitem__(e, [{'matcher': '*', 'hooks': [{'type': 'command', 'command': 'hook-client'}]}]) for e in matcher_hooks]; \
-d['hooks'] = h; \
-json.dump(d, open(p, 'w'), indent=2); \
-print('Hooks registered in ' + p)" ; \
-	fi
+	@./hooks/hook-client install-hooks || echo "Failed to register hooks"
 	@cp scripts/monitor-hooks-global.md ~/.claude/commands/monitor-hooks.md 2>/dev/null && \
 		echo "Installed /monitor-hooks command to ~/.claude/commands/" || true
 

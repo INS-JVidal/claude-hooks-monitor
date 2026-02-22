@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"claude-hooks-monitor/internal/config"
 )
 
 const maxStdinLen = 1 << 20 // 1 MiB — generous limit for hook payloads.
@@ -23,7 +26,20 @@ type Config struct {
 	ConfigPath string
 }
 
+// matcherHooks are hook types that require a "matcher": "*" field in their
+// settings.json spec. These hooks are tool-scoped and need the wildcard
+// matcher to fire for all tool invocations.
+var matcherHooks = map[string]bool{
+	"PreToolUse":          true,
+	"PostToolUse":         true,
+	"PostToolUseFailure":  true,
+}
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "install-hooks" {
+		os.Exit(runInstallHooks())
+	}
+
 	// Resolve config path relative to this binary's location.
 	execPath, _ := os.Executable()
 	hookDir := filepath.Dir(execPath)
@@ -341,4 +357,78 @@ func getEnvInt(key string, defaultValue int) int {
 		return defaultValue
 	}
 	return n
+}
+
+// runInstallHooks registers all hooks in ~/.claude/settings.json.
+// It is idempotent: if a "hooks" key already exists, it prints a message and
+// exits successfully without modifying the file.
+func runInstallHooks() int {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cannot determine home directory: %v\n", err)
+		return 1
+	}
+
+	claudeDir := filepath.Join(home, ".claude")
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+
+	// Ensure ~/.claude/ exists.
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "cannot create %s: %v\n", claudeDir, err)
+		return 1
+	}
+
+	// Read existing settings or start fresh.
+	var d map[string]interface{}
+	raw, err := os.ReadFile(settingsPath)
+	if err == nil {
+		if err := json.Unmarshal(raw, &d); err != nil {
+			fmt.Fprintf(os.Stderr, "invalid JSON in %s: %v\n", settingsPath, err)
+			return 1
+		}
+	} else {
+		d = map[string]interface{}{}
+	}
+
+	// Idempotent: if "hooks" already exists, do nothing.
+	if _, exists := d["hooks"]; exists {
+		fmt.Println("Hooks already present in " + settingsPath)
+		return 0
+	}
+
+	// Build hooks map from config.AllHookTypes.
+	h := make(map[string]interface{}, len(config.AllHookTypes))
+	hookSpec := []interface{}{
+		map[string]interface{}{
+			"type":    "command",
+			"command": "hook-client",
+		},
+	}
+
+	for _, name := range config.AllHookTypes {
+		entry := map[string]interface{}{
+			"hooks": hookSpec,
+		}
+		if matcherHooks[name] {
+			entry["matcher"] = "*"
+		}
+		h[name] = []interface{}{entry}
+	}
+
+	d["hooks"] = h
+
+	out, err := json.MarshalIndent(d, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "JSON marshal error: %v\n", err)
+		return 1
+	}
+	out = append(out, '\n')
+
+	if err := config.AtomicWriteFile(settingsPath, out, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to write %s: %v\n", settingsPath, err)
+		return 1
+	}
+
+	fmt.Println("Hooks registered in " + settingsPath)
+	return 0
 }

@@ -495,31 +495,9 @@ check_path_includes_local_bin() {
 }
 
 register_global_hooks() {
-    if ! command_exists python3; then
-        warn "python3 not found — skipping global hooks registration"
-        echo "  Run 'make install-hooks' from the repo to register hooks later."
-        return 0
-    fi
-
-    if python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if 'hooks' in d else 1)" "$HOME/.claude/settings.json" 2>/dev/null; then
-        ok "Hooks already present in ~/.claude/settings.json"
-        return 0
-    fi
-
-    python3 -c "
-import json, os
-p = os.path.expanduser('~/.claude/settings.json')
-d = json.load(open(p)) if os.path.exists(p) else {}
-hooks = ['SessionStart','SessionEnd','UserPromptSubmit','Notification','PermissionRequest','Stop','SubagentStart','SubagentStop','TeammateIdle','TaskCompleted','ConfigChange','PreCompact']
-matcher_hooks = ['PreToolUse','PostToolUse','PostToolUseFailure']
-h = {}
-for e in hooks:
-    h[e] = [{'hooks': [{'type': 'command', 'command': 'hook-client'}]}]
-for e in matcher_hooks:
-    h[e] = [{'matcher': '*', 'hooks': [{'type': 'command', 'command': 'hook-client'}]}]
-d['hooks'] = h
-json.dump(d, open(p, 'w'), indent=2)
-" && ok "Hooks registered in ~/.claude/settings.json" || {
+    mkdir -p "$HOME/.claude"
+    "$INSTALL_DIR/hooks/hook-client" install-hooks && \
+        ok "Hooks registered in ~/.claude/settings.json" || {
         warn "Failed to register hooks in ~/.claude/settings.json"
         echo "  Run 'make install-hooks' from the repo to register hooks later."
     }

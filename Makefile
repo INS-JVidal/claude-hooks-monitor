@@ -11,6 +11,8 @@ BINARY      := bin/monitor$(EXE)
 HOOK_CLIENT := hooks/hook-client$(EXE)
 PORT        ?= 8080
 GO          := $(shell which go 2>/dev/null || echo /usr/local/go/bin/go)
+VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS     := -s -w -X main.version=$(VERSION)
 HOOK_DIR    := hooks
 CONF        := $(HOOK_DIR)/hook_monitor.conf
 
@@ -33,12 +35,12 @@ deps: ## Install Go deps
 
 build: ## Build monitor server and hook client
 	@mkdir -p bin
-	$(GO) build -ldflags="-s -w" -o $(BINARY) ./cmd/monitor
-	$(GO) build -ldflags="-s -w" -o $(HOOK_CLIENT) ./cmd/hook-client
+	$(GO) build -ldflags="$(LDFLAGS)" -o $(BINARY) ./cmd/monitor
+	$(GO) build -ldflags="$(LDFLAGS)" -o $(HOOK_CLIENT) ./cmd/hook-client
 	@echo "Built $(BINARY) and $(HOOK_CLIENT)"
 
 build-hook-client: ## Build only the hook client binary
-	$(GO) build -ldflags="-s -w" -o $(HOOK_CLIENT) ./cmd/hook-client
+	$(GO) build -ldflags="$(LDFLAGS)" -o $(HOOK_CLIENT) ./cmd/hook-client
 	@echo "Built $(HOOK_CLIENT)"
 
 run: ## Run server (foreground, console output)
@@ -53,7 +55,7 @@ ifeq ($(OS),Windows_NT)
 	@echo "run-background is not supported on Windows. Use 'make run' in a separate terminal."
 else
 	@mkdir -p bin
-	$(GO) build -ldflags="-s -w" -o $(BINARY) ./cmd/monitor
+	$(GO) build -ldflags="$(LDFLAGS)" -o $(BINARY) ./cmd/monitor
 	PORT=$(PORT) nohup ./$(BINARY) > monitor.log 2>&1 &
 	@sleep 1
 	@echo "Server started in background (PID $$(lsof -ti:$(PORT) 2>/dev/null || echo '?'))"

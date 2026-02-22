@@ -23,6 +23,9 @@ import (
 	"github.com/fatih/color"
 )
 
+// Version is set at build time via -ldflags; falls back to "dev".
+var version = "dev"
+
 // hookTypes lists all hook types to register as HTTP endpoints.
 var hookTypes = []string{
 	"SessionStart",
@@ -184,7 +187,7 @@ func main() {
 		go srv.Serve(ln)
 
 		// Run TUI (blocks until user quits or ctx is cancelled).
-		if err := tui.Run(ctx, eventCh, actualPort, &mon.Dropped); err != nil {
+		if err := tui.Run(ctx, eventCh, actualPort, &mon.Dropped, version); err != nil {
 			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 		}
 	} else {

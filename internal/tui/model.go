@@ -47,6 +47,8 @@ type Model struct {
 	autoScroll  bool
 	dropped     *atomic.Int64 // Shared counter — events dropped because channel was full
 
+	version string // Build version displayed in header.
+
 	// Detail pane state.
 	detailOpen   bool
 	detailLines  []string
@@ -54,7 +56,7 @@ type Model struct {
 }
 
 // NewModel creates a new TUI model.
-func NewModel(ctx context.Context, eventCh chan hookevt.HookEvent, port int, dropped *atomic.Int64) Model {
+func NewModel(ctx context.Context, eventCh chan hookevt.HookEvent, port int, dropped *atomic.Int64, version string) Model {
 	return Model{
 		ctx:        ctx,
 		processor:  NewEventProcessor(dropped),
@@ -62,6 +64,7 @@ func NewModel(ctx context.Context, eventCh chan hookevt.HookEvent, port int, dro
 		port:       port,
 		autoScroll: true,
 		dropped:    dropped,
+		version:    version,
 	}
 }
 
@@ -238,8 +241,8 @@ func (m Model) View() string {
 
 	// Header.
 	headerText := fmt.Sprintf(
-		"Claude Hooks Monitor  │  Port %d  │  Events: %d",
-		m.port, m.totalEvents,
+		"Claude Hooks Monitor %s  │  Port %d  │  Events: %d",
+		m.version, m.port, m.totalEvents,
 	)
 	if d := m.dropped.Load(); d > 0 {
 		headerText += fmt.Sprintf("  │  Dropped: %d", d)
@@ -349,9 +352,9 @@ func setExpanded(nodeRef interface{}, expanded bool) {
 }
 
 // Run starts the Bubble Tea TUI. Blocks until the user quits.
-func Run(ctx context.Context, eventCh chan hookevt.HookEvent, port int, dropped *atomic.Int64) error {
+func Run(ctx context.Context, eventCh chan hookevt.HookEvent, port int, dropped *atomic.Int64, version string) error {
 	p := tea.NewProgram(
-		NewModel(ctx, eventCh, port, dropped),
+		NewModel(ctx, eventCh, port, dropped, version),
 		tea.WithAltScreen(),
 	)
 	_, err := p.Run()

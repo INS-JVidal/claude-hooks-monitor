@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"claude-hooks-monitor/internal/config"
 	"claude-hooks-monitor/internal/hookevt"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -53,10 +54,18 @@ type Model struct {
 	detailOpen   bool
 	detailLines  []string
 	detailScroll int
+
+	// Hooks menu state.
+	hooksOpen     bool
+	hooksReadOnly bool // True when config could not be read; blocks writes.
+	hooksCfg      config.HookConfig
+	hooksCursor   int
+	hooksErr      string
+	configPath    string
 }
 
 // NewModel creates a new TUI model.
-func NewModel(ctx context.Context, eventCh chan hookevt.HookEvent, port int, dropped *atomic.Int64, version string) Model {
+func NewModel(ctx context.Context, eventCh chan hookevt.HookEvent, port int, dropped *atomic.Int64, version, configPath string) Model {
 	return Model{
 		ctx:        ctx,
 		processor:  NewEventProcessor(dropped),
@@ -65,6 +74,7 @@ func NewModel(ctx context.Context, eventCh chan hookevt.HookEvent, port int, dro
 		autoScroll: true,
 		dropped:    dropped,
 		version:    version,
+		configPath: configPath,
 	}
 }
 
@@ -109,9 +119,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Hooks menu intercepts keys when open.
+	if m.hooksOpen {
+		return m.handleHooksKey(msg)
+	}
+
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
+
+	case "H":
+		if !m.detailOpen {
+			cfg, err := config.ReadConfig(m.configPath)
+			if err != nil {
+				m.hooksErr = err.Error()
+				m.hooksReadOnly = true
+			} else {
+				m.hooksErr = ""
+				m.hooksReadOnly = false
+			}
+			m.hooksCfg = cfg
+			m.hooksCursor = 0
+			m.hooksOpen = true
+		}
+		return m, nil
 
 	case "i":
 		if m.detailOpen {
@@ -234,6 +265,46 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleHooksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		return m, tea.Quit
+
+	case "H", "esc":
+		m.hooksOpen = false
+		m.hooksErr = ""
+		return m, nil
+
+	case "up", "k":
+		if m.hooksCursor > 0 {
+			m.hooksCursor--
+		}
+		return m, nil
+
+	case "down", "j":
+		if m.hooksCursor < len(m.hooksCfg.Hooks)-1 {
+			m.hooksCursor++
+		}
+		return m, nil
+
+	case "enter", " ":
+		if m.hooksReadOnly {
+			return m, nil // Config could not be read; refuse writes to prevent data loss.
+		}
+		if m.hooksCursor >= 0 && m.hooksCursor < len(m.hooksCfg.Hooks) {
+			m.hooksCfg.Hooks[m.hooksCursor].Enabled = !m.hooksCfg.Hooks[m.hooksCursor].Enabled
+			if err := config.WriteConfig(m.configPath, m.hooksCfg); err != nil {
+				m.hooksErr = "Write failed: " + err.Error()
+			} else {
+				m.hooksErr = ""
+			}
+		}
+		return m, nil
+	}
+
+	return m, nil
+}
+
 func (m Model) View() string {
 	if !m.ready {
 		return "Initializing..."
@@ -250,9 +321,16 @@ func (m Model) View() string {
 	header := headerStyle.Render(headerText)
 
 	// Footer — context-sensitive.
-	footerText := "q: quit  j/k: navigate  h/l: collapse/expand  space: toggle  g/G: top/bottom  i: detail"
-	if m.detailOpen {
+	var footerText string
+	switch {
+	case m.hooksOpen && m.hooksReadOnly:
+		footerText = "esc/H: close  j/k: navigate  (read-only: config unreadable)"
+	case m.hooksOpen:
+		footerText = "esc/H: close  j/k: navigate  enter/space: toggle"
+	case m.detailOpen:
 		footerText = "esc/i: close  j/k: scroll detail"
+	default:
+		footerText = "q: quit  j/k: navigate  h/l: collapse/expand  space: toggle  g/G: top/bottom  i: detail  H: hooks"
 	}
 	footer := footerStyle.Render(footerText)
 
@@ -260,6 +338,12 @@ func (m Model) View() string {
 	viewHeight := m.height - 3 // header + footer + breathing room
 	if viewHeight < 1 {
 		viewHeight = 1
+	}
+
+	// Hooks menu replaces the tree area when open.
+	if m.hooksOpen {
+		body := renderHooksMenu(m.hooksCfg, m.hooksCursor, m.hooksErr, viewHeight, m.width)
+		return header + "\n" + body + "\n" + footer
 	}
 
 	// Calculate detail pane height if open.
@@ -352,9 +436,9 @@ func setExpanded(nodeRef interface{}, expanded bool) {
 }
 
 // Run starts the Bubble Tea TUI. Blocks until the user quits.
-func Run(ctx context.Context, eventCh chan hookevt.HookEvent, port int, dropped *atomic.Int64, version string) error {
+func Run(ctx context.Context, eventCh chan hookevt.HookEvent, port int, dropped *atomic.Int64, version, configPath string) error {
 	p := tea.NewProgram(
-		NewModel(ctx, eventCh, port, dropped, version),
+		NewModel(ctx, eventCh, port, dropped, version, configPath),
 		tea.WithAltScreen(),
 	)
 	_, err := p.Run()

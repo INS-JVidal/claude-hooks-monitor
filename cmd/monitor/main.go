@@ -60,6 +60,7 @@ func main() {
 		os.Exit(1)
 	}
 	lockFile := strings.TrimSuffix(portFile, ".monitor-port") + ".monitor-lock"
+	configFile := filepath.Join(filepath.Dir(portFile), "hook_monitor.conf")
 
 	// Single-instance guard.
 	lockFd := platform.AcquireLock(lockFile, portFile)
@@ -187,7 +188,7 @@ func main() {
 		go srv.Serve(ln)
 
 		// Run TUI (blocks until user quits or ctx is cancelled).
-		if err := tui.Run(ctx, eventCh, actualPort, &mon.Dropped, version); err != nil {
+		if err := tui.Run(ctx, eventCh, actualPort, &mon.Dropped, version, configFile); err != nil {
 			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 		}
 	} else {
@@ -229,6 +230,11 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
 		return err

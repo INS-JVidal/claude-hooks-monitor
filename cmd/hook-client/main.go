@@ -69,6 +69,12 @@ func main() {
 		hookType = getEnv("HOOK_TYPE", "Unknown")
 	}
 
+	// Validate hookType: must be alphanumeric (letters only) to prevent
+	// path traversal and ensure config toggle checks match the URL path.
+	if !isAlphaOnly(hookType) {
+		os.Exit(0)
+	}
+
 	// Check toggle config — skip if this hook is disabled.
 	if !isHookEnabled(config.ConfigPath, hookType) {
 		os.Exit(0)
@@ -88,10 +94,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	// URL-escape hookType to prevent path traversal (e.g. "../../admin").
-	hookType = url.PathEscape(hookType)
-
-	// Send to monitor server.
+	// Send to monitor server (hookType is already validated as alpha-only above).
 	sendToMonitor(config, hookType, payload)
 
 	// Always exit 0 — never block Claude.
@@ -244,6 +247,22 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// isAlphaOnly returns true if s is non-empty and contains only ASCII letters.
+// This rejects path traversal attempts ("../../admin") and special characters
+// that could cause config check / URL path mismatches.
+func isAlphaOnly(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+			return false
+		}
+	}
+	return true
 }
 
 // getEnvInt parses an integer from an environment variable or returns a default.

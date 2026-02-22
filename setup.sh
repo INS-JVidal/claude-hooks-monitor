@@ -173,8 +173,8 @@ add_to_path() {
 
 # Get latest stable Go version
 get_latest_go_version() {
-    local latest_version
-    
+    local latest_version=""
+
     # Try to get from golang.org
     if command_exists curl; then
         latest_version=$(curl -sL https://go.dev/VERSION?m=text 2>/dev/null | head -n1 | sed 's/go//')
@@ -567,8 +567,10 @@ install_jq() {
     else
         echo -e "${CROSS} jq installation verification failed"
         FAILED_ITEMS+=("jq")
+        echo ""
+        return 1
     fi
-    
+
     echo ""
     return 0
 }
@@ -603,8 +605,10 @@ install_git() {
     else
         echo -e "${CROSS} git installation verification failed"
         FAILED_ITEMS+=("git")
+        echo ""
+        return 1
     fi
-    
+
     echo ""
     return 0
 }

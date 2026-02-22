@@ -137,7 +137,12 @@ func formatInputFields(input map[string]interface{}, wrapWidth int) []string {
 				lines = append(lines, paneLabelStyle.Render(pad(p.label+":", labelWidth))+" ")
 				lines = append(lines, formatLongValue(s, wrapWidth)...)
 			} else {
-				for i, wl := range wrapLines(s, wrapWidth-labelWidth-1) {
+				wrapped := wrapLines(s, wrapWidth-labelWidth-1)
+				for i, wl := range wrapped {
+					if i >= maxContentLines {
+						lines = append(lines, strings.Repeat(" ", labelWidth+2)+paneSectionStyle.Render(fmt.Sprintf("... (%d more lines)", len(wrapped)-i)))
+						break
+					}
 					if i == 0 {
 						lines = append(lines, formatField(p.label, wl))
 					} else {

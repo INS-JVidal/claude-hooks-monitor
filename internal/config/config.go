@@ -77,7 +77,7 @@ func WriteConfig(path string, cfg HookConfig) error {
 		b.WriteString(h.Name + " = " + val + "\n")
 	}
 
-	return atomicWriteFile(path, []byte(b.String()), 0600)
+	return AtomicWriteFile(path, []byte(b.String()), 0600)
 }
 
 // IsEnabled checks whether a single hook is enabled in the config.
@@ -146,9 +146,9 @@ func parseINIHooks(path string) (map[string]string, error) {
 	return result, nil
 }
 
-// atomicWriteFile writes data to a temp file and renames it to the target path.
+// AtomicWriteFile writes data to a temp file and renames it to the target path.
 // Readers never see a partial file — they get either the old content or the new.
-func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp.*")
 	if err != nil {
 		return err

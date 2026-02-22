@@ -34,10 +34,12 @@ func main() {
 		timeout = 10
 	}
 
+	projectDir := os.Getenv("CLAUDE_PROJECT_DIR")
+
 	config := Config{
 		MonitorURL: discoverMonitorURL(xdgDir, hookDir),
 		Timeout:    time.Duration(timeout) * time.Second,
-		ConfigPath: discoverFile("HOOK_MONITOR_CONFIG", "hook_monitor.conf", xdgDir, hookDir),
+		ConfigPath: discoverFile("HOOK_MONITOR_CONFIG", "hook_monitor.conf", xdgDir, hookDir, projectDir),
 	}
 
 	// No monitor URL means we couldn't find a valid target — skip silently.
@@ -212,25 +214,34 @@ func xdgConfigDir() string {
 
 // discoverFile locates a config/runtime file using a priority chain:
 //  1. Environment variable override (envKey)
-//  2. XDG config dir (~/.config/claude-hooks-monitor/)
-//  3. Binary-relative directory (legacy/fallback)
+//  2. Project-level: $CLAUDE_PROJECT_DIR/.claude/<filename>
+//  3. XDG config dir (~/.config/claude-hooks-monitor/)
+//  4. Binary-relative directory (legacy/fallback)
 //
 // Returns the first path that exists on disk, or the XDG path as default.
-func discoverFile(envKey, filename, xdgDir, hookDir string) string {
+// The projectDir parameter enables per-project config overrides; pass "" to skip.
+func discoverFile(envKey, filename, xdgDir, hookDir, projectDir string) string {
 	// 1. Env var override.
 	if envKey != "" {
 		if p := os.Getenv(envKey); p != "" {
 			return p
 		}
 	}
-	// 2. XDG config dir.
+	// 2. Project-level override: <projectDir>/.claude/<filename>
+	if projectDir != "" {
+		projPath := filepath.Join(projectDir, ".claude", filename)
+		if _, err := os.Stat(projPath); err == nil {
+			return projPath
+		}
+	}
+	// 3. XDG config dir.
 	if xdgDir != "" {
 		xdgPath := filepath.Join(xdgDir, filename)
 		if _, err := os.Stat(xdgPath); err == nil {
 			return xdgPath
 		}
 	}
-	// 3. Binary-relative (legacy).
+	// 4. Binary-relative (legacy).
 	legacyPath := filepath.Join(hookDir, filename)
 	if _, err := os.Stat(legacyPath); err == nil {
 		return legacyPath

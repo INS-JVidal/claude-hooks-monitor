@@ -229,8 +229,9 @@ func xdgConfigDir() string {
 // printBanner displays the startup banner in console mode.
 func printBanner(port, numHooks int) {
 	banner := color.New(color.FgHiGreen, color.Bold)
+	title := fmt.Sprintf("Claude Code Hooks Monitor %s", version)
 	banner.Println("╔══════════════════════════════════════════════════════════════╗")
-	banner.Println("║           Claude Code Hooks Monitor v0.4.4                  ║")
+	banner.Printf("║  %-59s ║\n", title)
 	banner.Println("╚══════════════════════════════════════════════════════════════╝")
 	fmt.Println()
 	color.New(color.FgHiCyan).Printf("  Registered %d hook endpoints\n", numHooks)

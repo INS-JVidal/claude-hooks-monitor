@@ -169,7 +169,7 @@ func TestDiscoverURL_EnvVar(t *testing.T) {
 				// For "empty_url" case, make sure env is unset and no port file exists
 				t.Setenv("HOOK_MONITOR_URL", "")
 			}
-			got := discoverMonitorURL(t.TempDir()) // empty hookDir = no port file
+			got := discoverMonitorURL("", t.TempDir()) // empty xdgDir, empty hookDir = no port file
 			if got != tc.want {
 				t.Errorf("discoverMonitorURL with HOOK_MONITOR_URL=%q = %q, want %q", tc.url, got, tc.want)
 			}
@@ -207,7 +207,7 @@ func TestDiscoverURL_PortFile(t *testing.T) {
 			portFile := filepath.Join(dir, ".monitor-port")
 			os.WriteFile(portFile, []byte(tc.content), 0600)
 
-			got := discoverMonitorURL(dir)
+			got := discoverMonitorURL("", dir)
 			if got != tc.want {
 				t.Errorf("discoverMonitorURL with port file %q = %q, want %q", tc.content, got, tc.want)
 			}
@@ -217,7 +217,7 @@ func TestDiscoverURL_PortFile(t *testing.T) {
 
 func TestDiscoverURL_PortFileMissing(t *testing.T) {
 	t.Setenv("HOOK_MONITOR_URL", "")
-	got := discoverMonitorURL(t.TempDir())
+	got := discoverMonitorURL("", t.TempDir())
 	if got != "" {
 		t.Errorf("expected empty URL with missing port file, got %q", got)
 	}
@@ -231,7 +231,7 @@ func TestDiscoverURL_EnvVarPriority(t *testing.T) {
 	portFile := filepath.Join(dir, ".monitor-port")
 	os.WriteFile(portFile, []byte("8080"), 0600)
 
-	got := discoverMonitorURL(dir)
+	got := discoverMonitorURL("", dir)
 	if got != "http://localhost:9999" {
 		t.Errorf("expected env var priority, got %q", got)
 	}

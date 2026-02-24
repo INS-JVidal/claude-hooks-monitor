@@ -441,8 +441,9 @@ HELPEOF
 # ── Parse arguments ───────────────────────────────────────────────────
 ARGUMENTS="${ARGUMENTS:-}"
 
-# Parse only first two words — ignore trailing tokens
-read -r SUBCMD REST _ <<< "$ARGUMENTS"
+# Parse only first two words — ignore trailing tokens.
+# "|| true" guards against read returning 1 on empty input under set -e.
+read -r SUBCMD REST _ <<< "$ARGUMENTS" || true
 SUBCMD="${SUBCMD:-}"
 REST="${REST:-}"
 

@@ -41,8 +41,12 @@ func main() {
 	}
 
 	// Resolve config path relative to this binary's location.
-	execPath, _ := os.Executable()
-	hookDir := filepath.Dir(execPath)
+	// If os.Executable() fails (deleted binary, pipe exec), skip binary-relative search.
+	execPath, err := os.Executable()
+	hookDir := ""
+	if err == nil && execPath != "" {
+		hookDir = filepath.Dir(execPath)
+	}
 	xdgDir := xdgConfigDir()
 
 	timeout := getEnvInt("HOOK_TIMEOUT", 2)
@@ -423,6 +427,12 @@ func runInstallHooks() int {
 		return 1
 	}
 	out = append(out, '\n')
+
+	// Back up existing settings before writing (recovery path if something goes wrong).
+	if raw != nil {
+		backupPath := settingsPath + ".bak"
+		_ = os.WriteFile(backupPath, raw, 0644)
+	}
 
 	if err := config.AtomicWriteFile(settingsPath, out, 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to write %s: %v\n", settingsPath, err)

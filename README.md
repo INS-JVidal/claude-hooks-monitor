@@ -226,6 +226,7 @@ PORT=9000 make run-ui
 | `Space` | Toggle expand/collapse |
 | `i` | Open detail pane (full JSON) |
 | `Esc` | Close detail pane |
+| `H` | Open hook config toggle menu |
 | `g` / `G` | Jump to top/bottom |
 | `q` / `Ctrl+C` | Quit |
 
@@ -265,6 +266,7 @@ claude-hooks-monitor/
 │   ├── monitor/main.go             # Monitor client — HTTP server, TUI, signal handling
 │   └── hook-client/main.go         # Hook forwarder — reads stdin, POSTs to monitor
 ├── internal/
+│   ├── config/config.go            # Shared hook config: AllHookTypes, INI read/write
 │   ├── hookevt/hookevt.go          # Shared HookEvent type
 │   ├── monitor/monitor.go          # Event buffer, stats, TUI channel
 │   ├── server/server.go            # HTTP handlers (/hook, /stats, /events, /health)

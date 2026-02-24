@@ -158,7 +158,7 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/INS-JVidal/claude-hook
 ```powershell
 git clone https://github.com/INS-JVidal/claude-hooks-monitor.git
 cd claude-hooks-monitor
-go build -ldflags="-s -w" -o bin\monitor.exe .
+go build -ldflags="-s -w" -o bin\monitor.exe .\cmd\monitor
 go build -ldflags="-s -w" -o hooks\hook-client.exe .\cmd\hook-client
 ```
 
@@ -293,7 +293,7 @@ go version
 ### "server starts but no events appear"
 
 1. **Is the server running?** `make check` — should say "Server is running on port 8080".
-2. **Port mismatch:** The hook-client reads the port from `.hook-monitor-port` file in the project root. If you're running the server on a custom port, make sure `HOOK_MONITOR_URL` matches.
+2. **Port mismatch:** The hook-client reads the port from `.monitor-port` in `~/.config/claude-hooks-monitor/` (system-wide install) or `hooks/.monitor-port` (local). If you're running the server on a custom port, set `HOOK_MONITOR_URL=http://localhost:<port>`.
 3. **Test manually:** `make send-test-hook` — if this shows an event, the server works and the issue is in hook delivery.
 
 ### "permission denied" on hook-client

@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"claude-hooks-monitor/internal/config"
+	hconf "claude-hooks-monitor/internal/config"
 	"claude-hooks-monitor/internal/hookevt"
 	"claude-hooks-monitor/internal/monitor"
 	"claude-hooks-monitor/internal/platform"
@@ -27,24 +27,8 @@ import (
 // Version is set at build time via -ldflags; falls back to "dev".
 var version = "dev"
 
-// hookTypes lists all hook types to register as HTTP endpoints.
-var hookTypes = []string{
-	"SessionStart",
-	"UserPromptSubmit",
-	"PreToolUse",
-	"PermissionRequest",
-	"PostToolUse",
-	"PostToolUseFailure",
-	"Notification",
-	"SubagentStart",
-	"SubagentStop",
-	"Stop",
-	"TeammateIdle",
-	"TaskCompleted",
-	"ConfigChange",
-	"PreCompact",
-	"SessionEnd",
-}
+// hookTypes references the canonical list from internal/config — single source of truth.
+var hookTypes = hconf.AllHookTypes
 
 func main() {
 	uiMode := flag.Bool("ui", false, "Start interactive tree UI")
@@ -53,9 +37,9 @@ func main() {
 	// Resolve lock and port file paths.
 	// Default to XDG config dir (~/.config/claude-hooks-monitor/) for system-wide install.
 	// PORT_FILE env var still works as override for backward compatibility.
+	xdgDir := xdgConfigDir()
 	portFile := os.Getenv("PORT_FILE")
 	if portFile == "" {
-		xdgDir := xdgConfigDir()
 		if xdgDir != "" {
 			// Ensure the XDG config directory exists.
 			os.MkdirAll(xdgDir, 0700)
@@ -71,7 +55,9 @@ func main() {
 		}
 	}
 	lockFile := strings.TrimSuffix(portFile, ".monitor-port") + ".monitor-lock"
-	configFile := filepath.Join(filepath.Dir(portFile), "hook_monitor.conf")
+	// Discover config file using the same priority chain as hook-client:
+	// env var → XDG dir → port file's directory (fallback).
+	configFile := discoverConfigFile(xdgDir, filepath.Dir(portFile))
 
 	// Single-instance guard.
 	lockFd := platform.AcquireLock(lockFile, portFile)
@@ -132,7 +118,7 @@ func main() {
 
 	// Write port file atomically (temp + rename) so hook-client never reads
 	// a partial or empty file during the brief write window.
-	if err := config.AtomicWriteFile(portFile, []byte(strconv.Itoa(actualPort)), 0600); err != nil {
+	if err := hconf.AtomicWriteFile(portFile, []byte(strconv.Itoa(actualPort)), 0600); err != nil {
 		if !*uiMode {
 			color.New(color.FgYellow).Printf("  Warning: could not write port file %s: %v\n", portFile, err)
 		}
@@ -224,6 +210,34 @@ func xdgConfigDir() string {
 		base = filepath.Join(home, ".config")
 	}
 	return filepath.Join(base, "claude-hooks-monitor")
+}
+
+// discoverConfigFile locates hook_monitor.conf using a priority chain:
+//  1. HOOK_MONITOR_CONFIG env var override
+//  2. XDG config dir (~/.config/claude-hooks-monitor/)
+//  3. fallbackDir (typically the port file's parent directory)
+//
+// Returns the first path that exists, or the XDG path as default.
+func discoverConfigFile(xdgDir, fallbackDir string) string {
+	const filename = "hook_monitor.conf"
+	if p := os.Getenv("HOOK_MONITOR_CONFIG"); p != "" {
+		return p
+	}
+	if xdgDir != "" {
+		xdgPath := filepath.Join(xdgDir, filename)
+		if _, err := os.Stat(xdgPath); err == nil {
+			return xdgPath
+		}
+	}
+	legacyPath := filepath.Join(fallbackDir, filename)
+	if _, err := os.Stat(legacyPath); err == nil {
+		return legacyPath
+	}
+	// Default to XDG path even if it doesn't exist yet (fail-open in ReadConfig).
+	if xdgDir != "" {
+		return filepath.Join(xdgDir, filename)
+	}
+	return legacyPath
 }
 
 // printBanner displays the startup banner in console mode.

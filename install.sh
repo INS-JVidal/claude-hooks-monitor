@@ -397,11 +397,23 @@ install_debian_deps() {
     local setup_script="/tmp/claude-hooks-setup-$$.sh"
 
     if command_exists curl; then
-        curl -sSL "$SETUP_SH_URL" -o "$setup_script"
+        curl -sSL --fail --max-time 60 "$SETUP_SH_URL" -o "$setup_script" || {
+            rm -f "$setup_script"
+            fail "Failed to download setup.sh — check your network connection."
+        }
     elif command_exists wget; then
-        wget -q "$SETUP_SH_URL" -O "$setup_script"
+        wget -q --timeout=60 "$SETUP_SH_URL" -O "$setup_script" || {
+            rm -f "$setup_script"
+            fail "Failed to download setup.sh — check your network connection."
+        }
     else
         fail "Neither curl nor wget available to download setup.sh"
+    fi
+
+    # Sanity check: script must be non-empty
+    if [ ! -s "$setup_script" ]; then
+        rm -f "$setup_script"
+        fail "Downloaded setup.sh is empty — aborting."
     fi
 
     chmod +x "$setup_script"
@@ -434,7 +446,11 @@ clone_or_update() {
         fail "Cannot clone into existing non-git directory."
     else
         info "Cloning repository to $INSTALL_DIR..."
-        git clone "$REPO_URL" "$INSTALL_DIR"
+        git clone "$REPO_URL" "$INSTALL_DIR" || {
+            # Clean up partial clone so re-runs don't hit "non-git directory" error.
+            rm -rf "$INSTALL_DIR"
+            fail "Repository clone failed. Check your network connection and try again."
+        }
     fi
     ok "Repository ready at $INSTALL_DIR"
 }
@@ -448,8 +464,11 @@ build_project() {
     else
         info "make not found — building with go build directly..."
         mkdir -p "$INSTALL_DIR/bin"
-        (cd "$INSTALL_DIR" && go build -ldflags="-s -w" -o bin/monitor ./cmd/monitor)
-        (cd "$INSTALL_DIR" && go build -ldflags="-s -w" -o hooks/hook-client ./cmd/hook-client)
+        local build_version
+        build_version=$(cd "$INSTALL_DIR" && git describe --tags --always --dirty 2>/dev/null || echo "dev")
+        local build_ldflags="-s -w -X main.version=${build_version}"
+        (cd "$INSTALL_DIR" && go build -ldflags="$build_ldflags" -o bin/monitor ./cmd/monitor)
+        (cd "$INSTALL_DIR" && go build -ldflags="$build_ldflags" -o hooks/hook-client ./cmd/hook-client)
     fi
     ok "Build complete"
 }

@@ -77,6 +77,8 @@ claude-hooks-monitor/
 │   └── hook-client/                 # Hook client binary
 │       └── main.go                  # Stdin reader, config check, HTTP forwarder
 ├── internal/
+│   ├── config/                      # Shared config package
+│   │   └── config.go                # AllHookTypes, INI read/write, AtomicWriteFile
 │   ├── hookevt/                     # Shared types
 │   │   └── hookevt.go               # HookEvent struct (used by all packages)
 │   ├── monitor/                     # Core event processing
@@ -269,6 +271,7 @@ claude-hooks-monitor/
   └────────────────────────────────────────────────────────────┘
 
   ┌──────────────────────┐
+  ┌──────────────────────┐
   │  cmd/hook-client/main │  (imports internal/config for
   │     (package main)    │   AllHookTypes + AtomicWriteFile)
   └──────────────────────┘
@@ -362,15 +365,15 @@ silently swallowed.
 ```
   1. HOOK_MONITOR_URL env var
      │
-     ├─ valid http(s) + loopback host? ──▶ use it
+     ├─ valid http + loopback host? ─────▶ use it
      └─ invalid or non-loopback? ────────▶ skip (exit 0)
 
-  2. .monitor-port file (sibling to binary)
+  2. .monitor-port file (XDG dir → binary-relative dir)
      │
      ├─ exists + valid port number? ─────▶ http://localhost:{port}
      └─ missing or invalid? ─────────────▶ fall through
 
-  3. Default: http://localhost:8080
+  3. No URL found → skip (exit 0, never block Claude)
 ```
 
 ---
@@ -386,8 +389,8 @@ silently swallowed.
         │
         ▼
   ┌───────────────────────┐
-  │ Resolve port/lock     │  PORT_FILE env or default "hooks/.monitor-port"
-  │ file paths            │  Rejects absolute paths and ".." traversal
+  │ Resolve port/lock     │  PORT_FILE env or XDG dir (~/.config/claude-hooks-monitor/)
+  │ + config file paths   │  Config via HOOK_MONITOR_CONFIG env → XDG → fallback
   └─────┬─────────────────┘
         │
         ▼
@@ -583,11 +586,13 @@ Two independent readers parse the same INI file:
   ──────────────────                  ──────────────────────
   isHookEnabled()                     parse_hooks_section()
   │                                   │
-  │  bufio.Scanner                    │  while IFS= read -r
+  │  os.ReadFile (single-syscall)     │  while IFS= read -r
   │  line-by-line                     │  line-by-line
   │  [hooks] section detection        │  [hooks] section detection
   │  key = value parsing              │  key = value parsing
-  │  case-sensitive match             │  case-insensitive match
+  │  case-insensitive key match       │  case-insensitive key match
+  │  inline comment stripping         │  inline comment stripping
+  │  last-wins for duplicates         │  PascalCase key normalization
   │  fail-open: missing → enabled     │  stores in associative array
   │                                   │  (declare -A HOOK_CFG)
   └──▶ bool                           └──▶ HOOK_CFG[key]=val
@@ -787,13 +792,15 @@ Two independent readers parse the same INI file:
 | Variable | Default | Used By | Purpose |
 |----------|---------|---------|---------|
 | `PORT` | 8080 | Go server | Listen port |
-| `PORT_FILE` | hooks/.monitor-port | Go server | Port file path |
+| `PORT_FILE` | (XDG dir)/.monitor-port | Go server | Port file path override |
 | `HOOK_MONITOR_URL` | (auto-discover) | hook-client | Override monitor URL |
+| `HOOK_MONITOR_CONFIG` | (auto-discover) | Both | Override config file path |
 | `HOOK_MONITOR_TOKEN` | (none) | Both | Bearer token for auth |
 | `HOOK_TIMEOUT` | 2 | hook-client | HTTP timeout (seconds, max 10) |
-| `CLAUDE_PROJECT_DIR` | (set by Claude) | slash command | Project root path |
+| `CLAUDE_PROJECT_DIR` | (set by Claude) | hook-client, slash cmd | Project root path |
 | `CLAUDE_PLUGIN_ROOT` | (set by Claude) | hook-client | Plugin context |
 | `CLAUDE_CODE_REMOTE` | (set by Claude) | hook-client | Remote session flag |
+| `XDG_CONFIG_HOME` | ~/.config | Both | Base for config directory |
 
 ---
 

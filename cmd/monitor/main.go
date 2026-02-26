@@ -15,6 +15,7 @@ import (
 	"time"
 
 	hconf "claude-hooks-monitor/internal/config"
+	"claude-hooks-monitor/internal/filecache"
 	"claude-hooks-monitor/internal/hookevt"
 	"claude-hooks-monitor/internal/monitor"
 	"claude-hooks-monitor/internal/platform"
@@ -84,6 +85,15 @@ func main() {
 		}
 	}
 
+	// Configure file read cache (tracks Read tool usage for dedup annotations).
+	cacheCfg := hconf.ReadCacheConfig(configFile)
+	if cacheCfg.Enabled {
+		mon.SetFileCache(filecache.New())
+		if !*uiMode {
+			fmt.Println("  File cache: enabled (Read dedup annotations)")
+		}
+	}
+
 	// Register HTTP handlers on a dedicated mux (avoids polluting DefaultServeMux).
 	mux := http.NewServeMux()
 
@@ -107,6 +117,7 @@ func main() {
 	})
 	mux.HandleFunc("/stats", server.HandleStats(mon))
 	mux.HandleFunc("/events", server.HandleEvents(mon))
+	mux.HandleFunc("/cache/file", server.HandleCacheFile(mon))
 	mux.HandleFunc("/health", server.HandleHealth)
 
 	// Listen on requested port, fall back to OS-assigned.

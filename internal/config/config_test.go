@@ -367,3 +367,59 @@ func TestWriteConfig_NoExistingFile(t *testing.T) {
 		t.Error("WriteConfig should write hook entry")
 	}
 }
+
+// ============================================================
+// ReadCacheConfig
+// ============================================================
+
+func TestReadCacheConfig_DefaultEnabled(t *testing.T) {
+	// Missing file should default to enabled (fail-open)
+	cfg := ReadCacheConfig("/nonexistent/config.conf")
+	if !cfg.Enabled {
+		t.Error("missing file should default to enabled")
+	}
+}
+
+func TestReadCacheConfig_Disabled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.conf")
+	os.WriteFile(path, []byte("[cache]\nenabled = no\n"), 0600)
+
+	cfg := ReadCacheConfig(path)
+	if cfg.Enabled {
+		t.Error("expected enabled=false when set to no")
+	}
+}
+
+func TestReadCacheConfig_Enabled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.conf")
+	os.WriteFile(path, []byte("[cache]\nenabled = yes\n"), 0600)
+
+	cfg := ReadCacheConfig(path)
+	if !cfg.Enabled {
+		t.Error("expected enabled=true when set to yes")
+	}
+}
+
+func TestReadCacheConfig_MissingSection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.conf")
+	os.WriteFile(path, []byte("[hooks]\nPreToolUse = yes\n"), 0600)
+
+	cfg := ReadCacheConfig(path)
+	if !cfg.Enabled {
+		t.Error("missing [cache] section should default to enabled")
+	}
+}
+
+func TestReadCacheConfig_CaseInsensitive(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.conf")
+	os.WriteFile(path, []byte("[cache]\nEnabled = NO\n"), 0600)
+
+	cfg := ReadCacheConfig(path)
+	if cfg.Enabled {
+		t.Error("expected case-insensitive 'NO' to disable")
+	}
+}

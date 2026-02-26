@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"claude-hooks-monitor/internal/filecache"
 	"claude-hooks-monitor/internal/hookevt"
 )
 
@@ -579,5 +580,252 @@ func TestDropped_ConcurrentIncrement(t *testing.T) {
 	}
 	if total != n {
 		t.Errorf("total stats = %d, want %d", total, n)
+	}
+}
+
+// ============================================================
+// File Cache Integration (processFileCache)
+// ============================================================
+
+func TestFileCache_PostToolUseRead(t *testing.T) {
+	t.Parallel()
+	mon := NewHookMonitor(nil)
+	fc := filecache.New()
+	mon.SetFileCache(fc)
+
+	mon.AddEvent(hookevt.HookEvent{
+		HookType:  "PostToolUse",
+		Timestamp: time.Now(),
+		Data: map[string]interface{}{
+			"tool_name":  "Read",
+			"session_id": "sess1",
+			"_cache": map[string]interface{}{
+				"file_path": "/home/user/handler.go",
+				"mtime_ns":  float64(1234567890),
+				"size":      float64(4096),
+			},
+		},
+	})
+
+	q := fc.Lookup("sess1", "/home/user/handler.go")
+	if !q.Found {
+		t.Fatal("expected file to be cached after PostToolUse Read")
+	}
+	if q.MtimeNS != 1234567890 {
+		t.Errorf("MtimeNS = %d, want 1234567890", q.MtimeNS)
+	}
+	if q.Size != 4096 {
+		t.Errorf("Size = %d, want 4096", q.Size)
+	}
+}
+
+func TestFileCache_PostToolUseRead_NoCache(t *testing.T) {
+	t.Parallel()
+	mon := NewHookMonitor(nil)
+	fc := filecache.New()
+	mon.SetFileCache(fc)
+
+	mon.AddEvent(hookevt.HookEvent{
+		HookType:  "PostToolUse",
+		Timestamp: time.Now(),
+		Data: map[string]interface{}{
+			"tool_name":  "Read",
+			"session_id": "sess1",
+		},
+	})
+
+	q := fc.Lookup("sess1", "/any/file.go")
+	if q.Found {
+		t.Error("expected no cache entry without _cache metadata")
+	}
+}
+
+func TestFileCache_PostToolUseRead_NonReadTool(t *testing.T) {
+	t.Parallel()
+	mon := NewHookMonitor(nil)
+	fc := filecache.New()
+	mon.SetFileCache(fc)
+
+	mon.AddEvent(hookevt.HookEvent{
+		HookType:  "PostToolUse",
+		Timestamp: time.Now(),
+		Data: map[string]interface{}{
+			"tool_name":  "Write",
+			"session_id": "sess1",
+			"_cache": map[string]interface{}{
+				"file_path": "/home/user/file.go",
+				"mtime_ns":  float64(100),
+				"size":      float64(200),
+			},
+		},
+	})
+
+	q := fc.Lookup("sess1", "/home/user/file.go")
+	if q.Found {
+		t.Error("expected no cache entry for non-Read tool")
+	}
+}
+
+func TestFileCache_PostToolUseRead_MissingSessionID(t *testing.T) {
+	t.Parallel()
+	mon := NewHookMonitor(nil)
+	fc := filecache.New()
+	mon.SetFileCache(fc)
+
+	mon.AddEvent(hookevt.HookEvent{
+		HookType:  "PostToolUse",
+		Timestamp: time.Now(),
+		Data: map[string]interface{}{
+			"tool_name": "Read",
+			"_cache": map[string]interface{}{
+				"file_path": "/home/user/file.go",
+				"mtime_ns":  float64(100),
+				"size":      float64(200),
+			},
+		},
+	})
+
+	q := fc.Lookup("", "/home/user/file.go")
+	if q.Found {
+		t.Error("expected no cache entry without session_id")
+	}
+}
+
+func TestFileCache_PostToolUseRead_ZeroMtime(t *testing.T) {
+	t.Parallel()
+	mon := NewHookMonitor(nil)
+	fc := filecache.New()
+	mon.SetFileCache(fc)
+
+	mon.AddEvent(hookevt.HookEvent{
+		HookType:  "PostToolUse",
+		Timestamp: time.Now(),
+		Data: map[string]interface{}{
+			"tool_name":  "Read",
+			"session_id": "sess1",
+			"_cache": map[string]interface{}{
+				"file_path": "/home/user/file.go",
+				"mtime_ns":  float64(0),
+				"size":      float64(100),
+			},
+		},
+	})
+
+	q := fc.Lookup("sess1", "/home/user/file.go")
+	if q.Found {
+		t.Error("expected no cache entry with zero mtime")
+	}
+}
+
+func TestFileCache_SessionEnd(t *testing.T) {
+	t.Parallel()
+	mon := NewHookMonitor(nil)
+	fc := filecache.New()
+	mon.SetFileCache(fc)
+
+	mon.AddEvent(hookevt.HookEvent{
+		HookType:  "PostToolUse",
+		Timestamp: time.Now(),
+		Data: map[string]interface{}{
+			"tool_name":  "Read",
+			"session_id": "sess1",
+			"_cache": map[string]interface{}{
+				"file_path": "/home/user/file.go",
+				"mtime_ns":  float64(1234567890),
+				"size":      float64(100),
+			},
+		},
+	})
+
+	q := fc.Lookup("sess1", "/home/user/file.go")
+	if !q.Found {
+		t.Fatal("expected file to be cached")
+	}
+
+	mon.AddEvent(hookevt.HookEvent{
+		HookType:  "SessionEnd",
+		Timestamp: time.Now(),
+		Data:      map[string]interface{}{"session_id": "sess1"},
+	})
+
+	q = fc.Lookup("sess1", "/home/user/file.go")
+	if q.Found {
+		t.Error("expected cache to be cleared after SessionEnd")
+	}
+}
+
+func TestFileCache_SessionEnd_NoSessionID(t *testing.T) {
+	t.Parallel()
+	mon := NewHookMonitor(nil)
+	fc := filecache.New()
+	mon.SetFileCache(fc)
+
+	// Should not panic
+	mon.AddEvent(hookevt.HookEvent{
+		HookType:  "SessionEnd",
+		Timestamp: time.Now(),
+		Data:      map[string]interface{}{},
+	})
+}
+
+func TestFileCache_OtherHookTypes_Ignored(t *testing.T) {
+	t.Parallel()
+	mon := NewHookMonitor(nil)
+	fc := filecache.New()
+	mon.SetFileCache(fc)
+
+	mon.AddEvent(hookevt.HookEvent{
+		HookType:  "PreToolUse",
+		Timestamp: time.Now(),
+		Data: map[string]interface{}{
+			"tool_name":  "Read",
+			"session_id": "sess1",
+			"_cache": map[string]interface{}{
+				"file_path": "/file.go",
+				"mtime_ns":  float64(100),
+				"size":      float64(200),
+			},
+		},
+	})
+
+	q := fc.Lookup("sess1", "/file.go")
+	if q.Found {
+		t.Error("PreToolUse should not populate file cache")
+	}
+}
+
+func TestFileCache_NilCache_NoError(t *testing.T) {
+	t.Parallel()
+	mon := NewHookMonitor(nil)
+
+	// Should not panic with nil file cache
+	mon.AddEvent(hookevt.HookEvent{
+		HookType:  "PostToolUse",
+		Timestamp: time.Now(),
+		Data: map[string]interface{}{
+			"tool_name":  "Read",
+			"session_id": "sess1",
+			"_cache": map[string]interface{}{
+				"file_path": "/file.go",
+				"mtime_ns":  float64(100),
+				"size":      float64(200),
+			},
+		},
+	})
+}
+
+func TestFileCache_SetAndGet(t *testing.T) {
+	t.Parallel()
+	mon := NewHookMonitor(nil)
+
+	if mon.FileCache() != nil {
+		t.Error("FileCache should be nil before SetFileCache")
+	}
+
+	fc := filecache.New()
+	mon.SetFileCache(fc)
+
+	if mon.FileCache() != fc {
+		t.Error("FileCache should return the set cache")
 	}
 }

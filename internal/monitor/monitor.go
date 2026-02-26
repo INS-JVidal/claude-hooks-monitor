@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"claude-hooks-monitor/internal/filecache"
 	"claude-hooks-monitor/internal/hookevt"
 	"claude-hooks-monitor/internal/sink"
 
@@ -58,6 +59,7 @@ type HookMonitor struct {
 	chClosed  bool                   // true after CloseChannel(); prevents send-on-closed-channel panic
 	Dropped   atomic.Int64           // Events dropped because TUI channel was full
 	eventSink sink.EventSink         // nil = no external forwarding
+	fileCache *filecache.SessionFileCache // nil = file caching disabled
 }
 
 // NewHookMonitor returns an initialized HookMonitor.
@@ -75,6 +77,17 @@ func NewHookMonitor(eventCh chan hookevt.HookEvent) *HookMonitor {
 // before any events are added. Pass nil to disable forwarding.
 func (m *HookMonitor) SetSink(s sink.EventSink) {
 	m.eventSink = s
+}
+
+// SetFileCache configures the session file cache for tracking Read tool usage.
+// Must be called before any events are added. Pass nil to disable caching.
+func (m *HookMonitor) SetFileCache(fc *filecache.SessionFileCache) {
+	m.fileCache = fc
+}
+
+// FileCache returns the configured file cache, or nil if caching is disabled.
+func (m *HookMonitor) FileCache() *filecache.SessionFileCache {
+	return m.fileCache
 }
 
 // CloseSink closes the event sink if one is configured.
@@ -112,6 +125,12 @@ func (m *HookMonitor) AddEvent(event hookevt.HookEvent) {
 		m.events = fresh
 	}
 	m.stats[event.HookType]++
+
+	// Process file cache updates (PostToolUse Read _cache, SessionEnd cleanup).
+	// Runs under the existing write lock — all operations are O(1) map access.
+	if m.fileCache != nil {
+		m.processFileCache(event)
+	}
 
 	// Channel send MUST happen inside the lock to prevent send-on-closed-channel
 	// panic. CloseChannel also acquires this lock before closing, so the send and
@@ -209,6 +228,54 @@ func (m *HookMonitor) GetEvents(limit int) []hookevt.HookEvent {
 	result := make([]hookevt.HookEvent, limit)
 	copy(result, m.events[start:])
 	return result
+}
+
+// processFileCache handles file cache updates from hook events.
+// Called under the write lock in AddEvent — must be fast (O(1) map ops only).
+//
+// PostToolUse with tool_name=="Read" and _cache metadata: records the file read.
+// SessionEnd: cleans up session data to free memory.
+func (m *HookMonitor) processFileCache(event hookevt.HookEvent) {
+	switch event.HookType {
+	case "PostToolUse":
+		toolName, _ := event.Data["tool_name"].(string)
+		if toolName != "Read" {
+			return
+		}
+		cache, ok := event.Data["_cache"].(map[string]interface{})
+		if !ok {
+			return
+		}
+		filePath, _ := cache["file_path"].(string)
+		if filePath == "" {
+			return
+		}
+		mtimeNS, _ := cache["mtime_ns"].(float64) // JSON numbers are float64
+		if mtimeNS == 0 {
+			return // zero mtime indicates malformed cache metadata
+		}
+		size, _ := cache["size"].(float64)
+		sessionID := extractSessionID(event.Data)
+		if sessionID == "" {
+			return
+		}
+		m.fileCache.RecordRead(sessionID, filePath, int64(mtimeNS), int64(size))
+
+	case "SessionEnd":
+		sessionID := extractSessionID(event.Data)
+		if sessionID != "" {
+			m.fileCache.EndSession(sessionID)
+		}
+	}
+}
+
+// extractSessionID pulls the session_id from event data.
+// Claude Code provides this in the hook payload.
+func extractSessionID(data map[string]interface{}) string {
+	if id, ok := data["session_id"].(string); ok {
+		return id
+	}
+	return ""
 }
 
 // hookColor returns the pre-computed color printer for a given hook type.

@@ -14,6 +14,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"claude-hooks-monitor/internal/filecache"
+
 	"claude-hooks-monitor/internal/config"
 )
 
@@ -110,6 +112,20 @@ func main() {
 		"plugin_root":  os.Getenv("CLAUDE_PLUGIN_ROOT"),
 		"is_remote":    os.Getenv("CLAUDE_CODE_REMOTE") == "true",
 		"has_claude_md": hasClaudeMD(inputData),
+	}
+
+	// PostToolUse Read: enrich with file stat metadata for cache tracking.
+	if hookType == "PostToolUse" {
+		enrichPostToolUseCache(inputData)
+	}
+
+	// PreToolUse Read: check file cache and inject annotation if unchanged.
+	// Encode error intentionally ignored: hook-client must exit 0 and never
+	// block Claude. If encoding fails, Claude simply skips the annotation.
+	if hookType == "PreToolUse" {
+		if output := handlePreToolUseRead(config, inputData); output != nil {
+			_ = json.NewEncoder(os.Stdout).Encode(output)
+		}
 	}
 
 	// Marshal to JSON.
@@ -374,6 +390,139 @@ func hasClaudeMD(inputData map[string]interface{}) bool {
 	}
 	_, err := os.Stat(filepath.Join(cwd, "CLAUDE.md"))
 	return err == nil
+}
+
+// enrichPostToolUseCache adds _cache metadata to PostToolUse Read events.
+// It stats the file to capture mtime and size for the monitor's file cache.
+func enrichPostToolUseCache(inputData map[string]interface{}) {
+	toolName, _ := inputData["tool_name"].(string)
+	if toolName != "Read" {
+		return
+	}
+
+	toolInput, ok := inputData["tool_input"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	filePath, _ := toolInput["file_path"].(string)
+	if filePath == "" {
+		return
+	}
+
+	filePath = filepath.Clean(filePath)
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return
+	}
+
+	inputData["_cache"] = map[string]interface{}{
+		"file_path": filePath,
+		"mtime_ns":  info.ModTime().UnixNano(),
+		"size":      info.Size(),
+	}
+}
+
+// hookSpecificOutput is the JSON structure written to stdout for PreToolUse hooks.
+type hookSpecificOutput struct {
+	HookSpecificOutput struct {
+		HookEventName    string `json:"hookEventName"`
+		PermissionDecision string `json:"permissionDecision"`
+		AdditionalContext  string `json:"additionalContext,omitempty"`
+	} `json:"hookSpecificOutput"`
+}
+
+// handlePreToolUseRead checks the file cache for a Read tool invocation.
+// If the file is unchanged since the last read, it returns a hookSpecificOutput
+// with an annotation suggesting Claude skip the re-read.
+// Returns nil if the file is new, changed, or the cache is unavailable.
+func handlePreToolUseRead(cfg Config, inputData map[string]interface{}) *hookSpecificOutput {
+	toolName, _ := inputData["tool_name"].(string)
+	if toolName != "Read" {
+		return nil
+	}
+
+	toolInput, ok := inputData["tool_input"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	filePath, _ := toolInput["file_path"].(string)
+	if filePath == "" {
+		return nil
+	}
+	filePath = filepath.Clean(filePath)
+
+	sessionID, _ := inputData["session_id"].(string)
+	if sessionID == "" {
+		return nil
+	}
+
+	// Query the monitor's file cache.
+	cached, err := queryFileCache(cfg, sessionID, filePath)
+	if err != nil || !cached.Found {
+		return nil
+	}
+
+	// Stat the file to compare mtime+size with cached values.
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return nil
+	}
+
+	currentMtime := info.ModTime().UnixNano()
+	currentSize := info.Size()
+
+	if currentMtime != cached.MtimeNS || currentSize != cached.Size {
+		// File has changed since last read — no annotation.
+		return nil
+	}
+
+	// File is unchanged — build annotation message.
+	baseName := filepath.Base(filePath)
+	timeStr := cached.LastReadAt.Format("15:04:05")
+	msg := fmt.Sprintf(
+		"File %s is unchanged since you last read it (%d reads ago, at %s). Consider whether you need to re-read it.",
+		baseName, cached.ReadsAgo, timeStr,
+	)
+
+	out := &hookSpecificOutput{}
+	out.HookSpecificOutput.HookEventName = "PreToolUse"
+	out.HookSpecificOutput.PermissionDecision = "allow"
+	out.HookSpecificOutput.AdditionalContext = msg
+	return out
+}
+
+// queryFileCache sends a GET request to the monitor's /cache/file endpoint.
+func queryFileCache(cfg Config, sessionID, filePath string) (*filecache.CacheQuery, error) {
+	client := &http.Client{
+		Timeout:   cfg.Timeout,
+		Transport: &http.Transport{DisableKeepAlives: true},
+	}
+
+	u := cfg.MonitorURL + "/cache/file?session=" + url.QueryEscape(sessionID) + "&path=" + url.QueryEscape(filePath)
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if token := os.Getenv("HOOK_MONITOR_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("cache query returned %d", resp.StatusCode)
+	}
+
+	var q filecache.CacheQuery
+	if err := json.NewDecoder(resp.Body).Decode(&q); err != nil {
+		return nil, err
+	}
+	return &q, nil
 }
 
 // runInstallHooks registers all hooks in ~/.claude/settings.json.

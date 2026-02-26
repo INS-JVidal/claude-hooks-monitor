@@ -155,6 +155,22 @@ func ReadSinkConfig(path string) SinkConfig {
 	return cfg
 }
 
+// CacheConfig holds the configuration for file read caching.
+type CacheConfig struct {
+	Enabled bool // Whether to track file reads for dedup annotations.
+}
+
+// ReadCacheConfig reads the [cache] section from the INI config file.
+// Missing file, missing section, or missing key defaults to enabled (fail-open).
+func ReadCacheConfig(path string) CacheConfig {
+	parsed, _ := parseINISection(path, "cache")
+	cfg := CacheConfig{Enabled: true}
+	if val, ok := parsed["enabled"]; ok {
+		cfg.Enabled = !strings.EqualFold(val, "no")
+	}
+	return cfg
+}
+
 // parseINISection reads a named section from an INI file and returns
 // a map of lowercased key -> raw value. Returns an empty map (not an error)
 // if the file is missing, unreadable, or the section doesn't exist.

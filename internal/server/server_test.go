@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"claude-hooks-monitor/internal/filecache"
 	"claude-hooks-monitor/internal/hookevt"
 	"claude-hooks-monitor/internal/monitor"
 )
@@ -830,4 +831,107 @@ func TestHandleHook_BodyReadError(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "failed to read body") {
 		t.Errorf("expected body read error, got: %s", rr.Body.String())
 	}
+}
+
+// ============================================================
+// HandleCacheFile
+// ============================================================
+
+func TestHandleCacheFile_ValidLookup(t *testing.T) {
+	t.Parallel()
+	mon := newMonitor()
+	fc := filecache.New()
+	mon.SetFileCache(fc)
+	fc.RecordRead("sess1", "/home/user/file.go", 1234567890, 4096)
+
+	h := HandleCacheFile(mon)
+	req := httptest.NewRequest(http.MethodGet, "/cache/file?session=sess1&path=/home/user/file.go", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	assertStatus(t, rr, 200)
+
+	var q filecache.CacheQuery
+	json.NewDecoder(rr.Body).Decode(&q)
+	if !q.Found {
+		t.Fatal("expected found=true")
+	}
+	if q.MtimeNS != 1234567890 {
+		t.Errorf("MtimeNS = %d, want 1234567890", q.MtimeNS)
+	}
+}
+
+func TestHandleCacheFile_UnknownFile(t *testing.T) {
+	t.Parallel()
+	mon := newMonitor()
+	fc := filecache.New()
+	mon.SetFileCache(fc)
+
+	h := HandleCacheFile(mon)
+	req := httptest.NewRequest(http.MethodGet, "/cache/file?session=sess1&path=/unknown.go", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	assertStatus(t, rr, 200)
+
+	var q filecache.CacheQuery
+	json.NewDecoder(rr.Body).Decode(&q)
+	if q.Found {
+		t.Error("expected found=false for unknown file")
+	}
+}
+
+func TestHandleCacheFile_MissingParams(t *testing.T) {
+	t.Parallel()
+	mon := newMonitor()
+	fc := filecache.New()
+	mon.SetFileCache(fc)
+	h := HandleCacheFile(mon)
+
+	// Missing both
+	req := httptest.NewRequest(http.MethodGet, "/cache/file", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	assertStatus(t, rr, 400)
+
+	// Missing path
+	req = httptest.NewRequest(http.MethodGet, "/cache/file?session=sess1", nil)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	assertStatus(t, rr, 400)
+
+	// Missing session
+	req = httptest.NewRequest(http.MethodGet, "/cache/file?path=/file.go", nil)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	assertStatus(t, rr, 400)
+}
+
+func TestHandleCacheFile_NilCache(t *testing.T) {
+	t.Parallel()
+	mon := newMonitor() // no SetFileCache
+
+	h := HandleCacheFile(mon)
+	req := httptest.NewRequest(http.MethodGet, "/cache/file?session=sess1&path=/file.go", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	assertStatus(t, rr, 200)
+
+	var result map[string]interface{}
+	json.NewDecoder(rr.Body).Decode(&result)
+	if result["found"] != false {
+		t.Errorf("expected found=false for nil cache, got %v", result["found"])
+	}
+}
+
+func TestHandleCacheFile_WrongMethod(t *testing.T) {
+	t.Parallel()
+	mon := newMonitor()
+	h := HandleCacheFile(mon)
+
+	req := httptest.NewRequest(http.MethodPost, "/cache/file?session=s&path=p", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	assertStatus(t, rr, 405)
 }

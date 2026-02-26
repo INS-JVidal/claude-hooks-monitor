@@ -207,6 +207,39 @@ func checkJSONDepth(data []byte, maxDepth int) error {
 	}
 }
 
+// HandleCacheFile returns cached file metadata for a session.
+// GET /cache/file?session=X&path=Y → CacheQuery JSON.
+// Returns 400 if either query parameter is missing.
+// Returns {"found":false} if the file cache is disabled or the file is unknown.
+func HandleCacheFile(mon *monitor.HookMonitor) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+
+		sessionID := r.URL.Query().Get("session")
+		filePath := r.URL.Query().Get("path")
+		if sessionID == "" || filePath == "" {
+			http.Error(w, `{"error":"session and path query parameters required"}`, http.StatusBadRequest)
+			return
+		}
+
+		fc := mon.FileCache()
+		if fc == nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{"found": false})
+			return
+		}
+
+		q := fc.Lookup(sessionID, filePath)
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(q); err != nil {
+			return
+		}
+	}
+}
+
 // HandleHealth returns a simple health check response.
 func HandleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

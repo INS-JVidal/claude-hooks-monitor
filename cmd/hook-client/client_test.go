@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ============================================================
@@ -486,4 +487,216 @@ func TestSendToMonitor_InvalidURL(t *testing.T) {
 	}
 	sendToMonitor(config, "PreToolUse", []byte(`{}`))
 	// If we get here without panic, test passes
+}
+
+// ============================================================
+// enrichPostToolUseCache — PostToolUse Read file stat enrichment
+// ============================================================
+
+func TestEnrichPostToolUseCache_ReadTool(t *testing.T) {
+	t.Parallel()
+
+	// Create a temp file to stat.
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "test.go")
+	os.WriteFile(filePath, []byte("package main"), 0644)
+
+	inputData := map[string]interface{}{
+		"tool_name":  "Read",
+		"tool_input": map[string]interface{}{"file_path": filePath},
+	}
+	enrichPostToolUseCache(inputData)
+
+	cache, ok := inputData["_cache"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected _cache metadata to be added")
+	}
+	if cache["file_path"] != filepath.Clean(filePath) {
+		t.Errorf("file_path = %v, want %s", cache["file_path"], filepath.Clean(filePath))
+	}
+	if _, ok := cache["mtime_ns"]; !ok {
+		t.Error("expected mtime_ns in _cache")
+	}
+	if size, ok := cache["size"].(int64); !ok || size != 12 {
+		t.Errorf("size = %v, want 12", cache["size"])
+	}
+}
+
+func TestEnrichPostToolUseCache_NonReadTool(t *testing.T) {
+	t.Parallel()
+	inputData := map[string]interface{}{
+		"tool_name":  "Write",
+		"tool_input": map[string]interface{}{"file_path": "/some/file.go"},
+	}
+	enrichPostToolUseCache(inputData)
+
+	if _, ok := inputData["_cache"]; ok {
+		t.Error("_cache should not be added for non-Read tools")
+	}
+}
+
+func TestEnrichPostToolUseCache_NoToolInput(t *testing.T) {
+	t.Parallel()
+	inputData := map[string]interface{}{
+		"tool_name": "Read",
+	}
+	enrichPostToolUseCache(inputData)
+
+	if _, ok := inputData["_cache"]; ok {
+		t.Error("_cache should not be added without tool_input")
+	}
+}
+
+func TestEnrichPostToolUseCache_NonexistentFile(t *testing.T) {
+	t.Parallel()
+	inputData := map[string]interface{}{
+		"tool_name":  "Read",
+		"tool_input": map[string]interface{}{"file_path": "/nonexistent/file.go"},
+	}
+	enrichPostToolUseCache(inputData)
+
+	if _, ok := inputData["_cache"]; ok {
+		t.Error("_cache should not be added for nonexistent files")
+	}
+}
+
+// ============================================================
+// handlePreToolUseRead — PreToolUse Read interception
+// ============================================================
+
+func TestHandlePreToolUseRead_Unchanged(t *testing.T) {
+	// Create a temp file.
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "handler.go")
+	os.WriteFile(filePath, []byte("package main"), 0644)
+
+	info, _ := os.Stat(filePath)
+	mtimeNS := info.ModTime().UnixNano()
+	size := info.Size()
+
+	// Serve a fake cache response.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"found":        true,
+			"file_path":    filePath,
+			"mtime_ns":     mtimeNS,
+			"size":         size,
+			"reads_ago":    3,
+			"last_read_at": time.Now().Add(-5 * time.Minute),
+		})
+	}))
+	defer srv.Close()
+
+	cfg := Config{MonitorURL: srv.URL, Timeout: 2 * time.Second}
+	inputData := map[string]interface{}{
+		"tool_name":  "Read",
+		"tool_input": map[string]interface{}{"file_path": filePath},
+		"session_id": "test-session",
+	}
+
+	output := handlePreToolUseRead(cfg, inputData)
+	if output == nil {
+		t.Fatal("expected annotation output for unchanged file")
+	}
+	if output.HookSpecificOutput.PermissionDecision != "allow" {
+		t.Errorf("permissionDecision = %q, want allow", output.HookSpecificOutput.PermissionDecision)
+	}
+	if !strings.Contains(output.HookSpecificOutput.AdditionalContext, "handler.go") {
+		t.Errorf("annotation should mention filename, got: %s", output.HookSpecificOutput.AdditionalContext)
+	}
+	if !strings.Contains(output.HookSpecificOutput.AdditionalContext, "3 reads ago") {
+		t.Errorf("annotation should mention reads ago, got: %s", output.HookSpecificOutput.AdditionalContext)
+	}
+}
+
+func TestHandlePreToolUseRead_Changed(t *testing.T) {
+	// Create a temp file.
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "handler.go")
+	os.WriteFile(filePath, []byte("package main"), 0644)
+
+	// Serve a cache response with DIFFERENT mtime (simulating file was modified).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"found":     true,
+			"file_path": filePath,
+			"mtime_ns":  int64(999), // doesn't match actual file
+			"size":      int64(12),
+			"reads_ago": 1,
+		})
+	}))
+	defer srv.Close()
+
+	cfg := Config{MonitorURL: srv.URL, Timeout: 2 * time.Second}
+	inputData := map[string]interface{}{
+		"tool_name":  "Read",
+		"tool_input": map[string]interface{}{"file_path": filePath},
+		"session_id": "test-session",
+	}
+
+	output := handlePreToolUseRead(cfg, inputData)
+	if output != nil {
+		t.Error("expected nil output for changed file")
+	}
+}
+
+func TestHandlePreToolUseRead_NotInCache(t *testing.T) {
+	// Serve a "not found" cache response.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{"found": false})
+	}))
+	defer srv.Close()
+
+	cfg := Config{MonitorURL: srv.URL, Timeout: 2 * time.Second}
+	inputData := map[string]interface{}{
+		"tool_name":  "Read",
+		"tool_input": map[string]interface{}{"file_path": "/some/new/file.go"},
+		"session_id": "test-session",
+	}
+
+	output := handlePreToolUseRead(cfg, inputData)
+	if output != nil {
+		t.Error("expected nil output for file not in cache")
+	}
+}
+
+func TestHandlePreToolUseRead_NonReadTool(t *testing.T) {
+	cfg := Config{MonitorURL: "http://localhost:1", Timeout: 100 * time.Millisecond}
+	inputData := map[string]interface{}{
+		"tool_name":  "Write",
+		"tool_input": map[string]interface{}{"file_path": "/some/file.go"},
+		"session_id": "test-session",
+	}
+
+	output := handlePreToolUseRead(cfg, inputData)
+	if output != nil {
+		t.Error("expected nil output for non-Read tool")
+	}
+}
+
+func TestHandlePreToolUseRead_NoSessionID(t *testing.T) {
+	cfg := Config{MonitorURL: "http://localhost:1", Timeout: 100 * time.Millisecond}
+	inputData := map[string]interface{}{
+		"tool_name":  "Read",
+		"tool_input": map[string]interface{}{"file_path": "/some/file.go"},
+	}
+
+	output := handlePreToolUseRead(cfg, inputData)
+	if output != nil {
+		t.Error("expected nil output when session_id is missing")
+	}
+}
+
+func TestHandlePreToolUseRead_MonitorDown(t *testing.T) {
+	cfg := Config{MonitorURL: "http://127.0.0.1:1", Timeout: 100 * time.Millisecond}
+	inputData := map[string]interface{}{
+		"tool_name":  "Read",
+		"tool_input": map[string]interface{}{"file_path": "/some/file.go"},
+		"session_id": "test-session",
+	}
+
+	output := handlePreToolUseRead(cfg, inputData)
+	if output != nil {
+		t.Error("expected nil output when monitor is unreachable")
+	}
 }

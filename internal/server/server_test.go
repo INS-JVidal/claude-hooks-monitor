@@ -719,12 +719,13 @@ func TestHandleHook_DuplicateKeys(t *testing.T) {
 	t.Parallel()
 	mon := newMonitor()
 	h := HandleHook(mon, "PreToolUse")
-	// Go's json.Unmarshal uses last-wins for duplicate keys
+	// Go's json decoder uses last-wins for duplicate keys.
+	// With UseNumber(), values are json.Number, not float64.
 	rr := postHook(h, []byte(`{"a":1,"a":2}`))
 	assertStatus(t, rr, 200)
 	events := mon.GetEvents(1)
-	if events[0].Data["a"] != float64(2) {
-		t.Errorf("expected last-wins, got %v", events[0].Data["a"])
+	if fmt.Sprintf("%v", events[0].Data["a"]) != "2" {
+		t.Errorf("expected last-wins value 2, got %v", events[0].Data["a"])
 	}
 }
 

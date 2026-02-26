@@ -64,7 +64,9 @@ func HandleHook(mon *monitor.HookMonitor, hookType string) http.HandlerFunc {
 				http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
 				return
 			}
-			if err := json.Unmarshal(body, &data); err != nil {
+			dec := json.NewDecoder(bytes.NewReader(body))
+			dec.UseNumber() // Preserve int64 precision for nanosecond timestamps.
+			if err := dec.Decode(&data); err != nil {
 				http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
 				return
 			}

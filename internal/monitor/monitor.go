@@ -250,16 +250,16 @@ func (m *HookMonitor) processFileCache(event hookevt.HookEvent) {
 		if filePath == "" {
 			return
 		}
-		mtimeNS, _ := cache["mtime_ns"].(float64) // JSON numbers are float64
+		mtimeNS := jsonInt64(cache["mtime_ns"])
 		if mtimeNS == 0 {
 			return // zero mtime indicates malformed cache metadata
 		}
-		size, _ := cache["size"].(float64)
+		size := jsonInt64(cache["size"])
 		sessionID := extractSessionID(event.Data)
 		if sessionID == "" {
 			return
 		}
-		m.fileCache.RecordRead(sessionID, filePath, int64(mtimeNS), int64(size))
+		m.fileCache.RecordRead(sessionID, filePath, mtimeNS, size)
 
 	case "SessionEnd":
 		sessionID := extractSessionID(event.Data)
@@ -276,6 +276,19 @@ func extractSessionID(data map[string]interface{}) string {
 		return id
 	}
 	return ""
+}
+
+// jsonInt64 extracts an int64 from a value that may be json.Number or float64,
+// depending on whether the JSON decoder used UseNumber().
+func jsonInt64(v interface{}) int64 {
+	switch n := v.(type) {
+	case json.Number:
+		i, _ := n.Int64()
+		return i
+	case float64:
+		return int64(n)
+	}
+	return 0
 }
 
 // hookColor returns the pre-computed color printer for a given hook type.

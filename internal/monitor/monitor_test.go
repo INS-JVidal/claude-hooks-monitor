@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
@@ -812,6 +813,40 @@ func TestFileCache_NilCache_NoError(t *testing.T) {
 			},
 		},
 	})
+}
+
+func TestFileCache_PostToolUseRead_JSONNumber(t *testing.T) {
+	t.Parallel()
+	mon := NewHookMonitor(nil)
+	fc := filecache.New()
+	mon.SetFileCache(fc)
+
+	// When UseNumber() is enabled, JSON numbers arrive as json.Number.
+	// jsonInt64 must handle both json.Number and float64.
+	mon.AddEvent(hookevt.HookEvent{
+		HookType:  "PostToolUse",
+		Timestamp: time.Now(),
+		Data: map[string]interface{}{
+			"tool_name":  "Read",
+			"session_id": "sess-jn",
+			"_cache": map[string]interface{}{
+				"file_path": "/home/user/big_mtime.go",
+				"mtime_ns":  json.Number("1772138832089257486"),
+				"size":      json.Number("4096"),
+			},
+		},
+	})
+
+	q := fc.Lookup("sess-jn", "/home/user/big_mtime.go")
+	if !q.Found {
+		t.Fatal("expected file to be cached with json.Number values")
+	}
+	if q.MtimeNS != 1772138832089257486 {
+		t.Errorf("MtimeNS = %d, want 1772138832089257486 (exact int64)", q.MtimeNS)
+	}
+	if q.Size != 4096 {
+		t.Errorf("Size = %d, want 4096", q.Size)
+	}
 }
 
 func TestFileCache_SetAndGet(t *testing.T) {

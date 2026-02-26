@@ -1,13 +1,16 @@
 package monitor
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"claude-hooks-monitor/internal/hookevt"
+	"claude-hooks-monitor/internal/sink"
 
 	"github.com/fatih/color"
 )
@@ -54,6 +57,7 @@ type HookMonitor struct {
 	eventCh   chan hookevt.HookEvent // nil when TUI inactive
 	chClosed  bool                   // true after CloseChannel(); prevents send-on-closed-channel panic
 	Dropped   atomic.Int64           // Events dropped because TUI channel was full
+	eventSink sink.EventSink         // nil = no external forwarding
 }
 
 // NewHookMonitor returns an initialized HookMonitor.
@@ -63,6 +67,21 @@ func NewHookMonitor(eventCh chan hookevt.HookEvent) *HookMonitor {
 		events:  make([]hookevt.HookEvent, 0, 256),
 		stats:   make(map[string]int),
 		eventCh: eventCh,
+	}
+}
+
+// SetSink configures an optional EventSink for forwarding events to an
+// external consumer (e.g., the hooks-store companion). Must be called
+// before any events are added. Pass nil to disable forwarding.
+func (m *HookMonitor) SetSink(s sink.EventSink) {
+	m.eventSink = s
+}
+
+// CloseSink closes the event sink if one is configured.
+// Safe to call even if no sink is set.
+func (m *HookMonitor) CloseSink() {
+	if m.eventSink != nil {
+		m.eventSink.Close()
 	}
 }
 
@@ -112,6 +131,18 @@ func (m *HookMonitor) AddEvent(event hookevt.HookEvent) {
 	default:
 		// Channel is closed (shutdown in progress) — count as dropped.
 		m.Dropped.Add(1)
+	}
+
+	// Forward to external sink outside the lock. The goroutine captures a
+	// copy of the event (value type with deep-copied Data map from HandleHook),
+	// so no synchronization is needed beyond the initial read of m.eventSink.
+	if m.eventSink != nil {
+		evt := event
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = m.eventSink.Send(ctx, evt) // fire-and-forget
+		}()
 	}
 }
 

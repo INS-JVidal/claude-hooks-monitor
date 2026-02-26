@@ -19,6 +19,7 @@ import (
 	"claude-hooks-monitor/internal/monitor"
 	"claude-hooks-monitor/internal/platform"
 	"claude-hooks-monitor/internal/server"
+	"claude-hooks-monitor/internal/sink"
 	"claude-hooks-monitor/internal/tui"
 
 	"github.com/fatih/color"
@@ -72,6 +73,16 @@ func main() {
 		eventCh = make(chan hookevt.HookEvent, 256)
 	}
 	mon := monitor.NewHookMonitor(eventCh)
+
+	// Configure external event sink (forwarding to companion program).
+	sinkCfg := hconf.ReadSinkConfig(configFile)
+	if sinkCfg.Forward {
+		s := sink.NewHTTPSink(sinkCfg.Endpoint)
+		mon.SetSink(s)
+		if !*uiMode {
+			fmt.Printf("  Sink: forwarding events to %s\n", sinkCfg.Endpoint)
+		}
+	}
 
 	// Register HTTP handlers on a dedicated mux (avoids polluting DefaultServeMux).
 	mux := http.NewServeMux()
@@ -162,6 +173,7 @@ func main() {
 		// a "closed" flag under the monitor's lock, preventing any in-flight
 		// AddEvent from sending on the closed channel (which would panic).
 		mon.CloseChannel()
+		mon.CloseSink()
 		os.Remove(portFile)
 		lockFd.Close()
 		os.Remove(lockFile)

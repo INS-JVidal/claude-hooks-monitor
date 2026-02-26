@@ -58,26 +58,68 @@ func ReadConfig(path string) (HookConfig, error) {
 	return cfg, err
 }
 
-// WriteConfig writes the full [hooks] section atomically (temp + rename).
-// Preserves the standard header comments for human readability.
+// WriteConfig writes the [hooks] section atomically (temp + rename), preserving
+// any other sections (e.g., [sink]) that exist in the file. If the file doesn't
+// exist yet, only the [hooks] section is written.
 func WriteConfig(path string, cfg HookConfig) error {
-	var b strings.Builder
-	b.WriteString("[hooks]\n")
-	b.WriteString("# Toggle individual hooks on/off.\n")
-	b.WriteString("# Set to \"yes\" to monitor, \"no\" to skip.\n")
-	b.WriteString("# Missing entries default to \"yes\" (monitor everything).\n")
-	b.WriteString("# Changes take effect immediately — no restart needed.\n")
-	b.WriteString("\n")
+	var hooks strings.Builder
+	hooks.WriteString("[hooks]\n")
+	hooks.WriteString("# Toggle individual hooks on/off.\n")
+	hooks.WriteString("# Set to \"yes\" to monitor, \"no\" to skip.\n")
+	hooks.WriteString("# Missing entries default to \"yes\" (monitor everything).\n")
+	hooks.WriteString("# Changes take effect immediately — no restart needed.\n")
+	hooks.WriteString("\n")
 
 	for _, h := range cfg.Hooks {
 		val := "yes"
 		if !h.Enabled {
 			val = "no"
 		}
-		b.WriteString(h.Name + " = " + val + "\n")
+		hooks.WriteString(h.Name + " = " + val + "\n")
+	}
+
+	// Preserve non-[hooks] sections from the existing file.
+	other := extractNonHooksContent(path)
+	var b strings.Builder
+	b.WriteString(hooks.String())
+	if other != "" {
+		b.WriteString("\n")
+		b.WriteString(other)
 	}
 
 	return AtomicWriteFile(path, []byte(b.String()), 0600)
+}
+
+// extractNonHooksContent reads the file at path and returns all lines that
+// belong to sections other than [hooks] (including their section headers,
+// comments, and blank lines). Returns "" if the file is missing or contains
+// only the [hooks] section.
+func extractNonHooksContent(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	content := strings.TrimPrefix(string(raw), "\xef\xbb\xbf")
+
+	var result strings.Builder
+	inHooks := false
+	seenNonHooks := false
+
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if len(trimmed) > 0 && trimmed[0] == '[' {
+			inHooks = strings.EqualFold(trimmed, "[hooks]")
+			if !inHooks {
+				seenNonHooks = true
+			}
+		}
+		if !inHooks && seenNonHooks {
+			result.WriteString(line)
+			result.WriteByte('\n')
+		}
+	}
+
+	return strings.TrimRight(result.String(), "\n") + "\n"
 }
 
 // IsEnabled checks whether a single hook is enabled in the config.
@@ -89,6 +131,70 @@ func IsEnabled(path, hookName string) bool {
 		return !strings.EqualFold(val, "no")
 	}
 	return true
+}
+
+// SinkConfig holds the configuration for forwarding events to an external sink.
+type SinkConfig struct {
+	Forward  bool   // Whether to forward events.
+	Endpoint string // Target URL (e.g., "http://localhost:9800/ingest").
+}
+
+// ReadSinkConfig reads the [sink] section from the INI config file.
+// Missing file or missing section defaults to forwarding disabled.
+func ReadSinkConfig(path string) SinkConfig {
+	parsed, _ := parseINISection(path, "sink")
+	cfg := SinkConfig{
+		Endpoint: "http://localhost:9800/ingest",
+	}
+	if val, ok := parsed["forward"]; ok {
+		cfg.Forward = strings.EqualFold(val, "yes")
+	}
+	if val, ok := parsed["endpoint"]; ok && val != "" {
+		cfg.Endpoint = val
+	}
+	return cfg
+}
+
+// parseINISection reads a named section from an INI file and returns
+// a map of lowercased key -> raw value. Returns an empty map (not an error)
+// if the file is missing, unreadable, or the section doesn't exist.
+func parseINISection(path, section string) (map[string]string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]string{}, err
+	}
+
+	content := string(raw)
+	content = strings.TrimPrefix(content, "\xef\xbb\xbf")
+
+	target := "[" + strings.ToLower(section) + "]"
+	result := make(map[string]string)
+	inSection := false
+
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if len(line) == 0 || line[0] == '#' {
+			continue
+		}
+		if line[0] == '[' {
+			inSection = strings.EqualFold(line, target)
+			continue
+		}
+		if !inSection {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+		if idx := strings.Index(val, "#"); idx >= 0 {
+			val = strings.TrimSpace(val[:idx])
+		}
+		result[strings.ToLower(key)] = val
+	}
+	return result, nil
 }
 
 // parseINIHooks reads the [hooks] section from an INI file and returns

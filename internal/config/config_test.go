@@ -239,3 +239,131 @@ func TestIsEnabled_CaseInsensitive(t *testing.T) {
 		t.Error("PRETOOLUSE should be disabled (case-insensitive)")
 	}
 }
+
+// ============================================================
+// ReadSinkConfig
+// ============================================================
+
+func TestReadSinkConfig_Defaults(t *testing.T) {
+	cfg := ReadSinkConfig("/nonexistent/path")
+	if cfg.Forward {
+		t.Error("Forward should default to false")
+	}
+	if cfg.Endpoint != "http://localhost:9800/ingest" {
+		t.Errorf("Endpoint = %q, want default", cfg.Endpoint)
+	}
+}
+
+func TestReadSinkConfig_Enabled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.conf")
+	content := "[sink]\nforward = yes\nendpoint = http://example.com/events\n"
+	os.WriteFile(path, []byte(content), 0600)
+
+	cfg := ReadSinkConfig(path)
+	if !cfg.Forward {
+		t.Error("Forward should be true")
+	}
+	if cfg.Endpoint != "http://example.com/events" {
+		t.Errorf("Endpoint = %q, want http://example.com/events", cfg.Endpoint)
+	}
+}
+
+func TestReadSinkConfig_CaseInsensitive(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.conf")
+	content := "[SINK]\nForward = YES\n"
+	os.WriteFile(path, []byte(content), 0600)
+
+	cfg := ReadSinkConfig(path)
+	if !cfg.Forward {
+		t.Error("Forward should be true (case-insensitive)")
+	}
+}
+
+func TestReadSinkConfig_InlineComment(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.conf")
+	content := "[sink]\nforward = yes # enable forwarding\nendpoint = http://localhost:9800/ingest # default\n"
+	os.WriteFile(path, []byte(content), 0600)
+
+	cfg := ReadSinkConfig(path)
+	if !cfg.Forward {
+		t.Error("Forward should be true (inline comment stripped)")
+	}
+}
+
+func TestReadSinkConfig_NoForwardKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.conf")
+	content := "[sink]\nendpoint = http://custom:8080/ingest\n"
+	os.WriteFile(path, []byte(content), 0600)
+
+	cfg := ReadSinkConfig(path)
+	if cfg.Forward {
+		t.Error("Forward should default to false when key missing")
+	}
+	if cfg.Endpoint != "http://custom:8080/ingest" {
+		t.Errorf("Endpoint = %q, want http://custom:8080/ingest", cfg.Endpoint)
+	}
+}
+
+// ============================================================
+// WriteConfig preserves non-[hooks] sections
+// ============================================================
+
+func TestWriteConfig_PreservesSinkSection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.conf")
+
+	// Write initial file with both sections.
+	initial := "[hooks]\nSessionStart = yes\n\n[sink]\nforward = yes\nendpoint = http://localhost:9800/ingest\n"
+	os.WriteFile(path, []byte(initial), 0600)
+
+	// Toggle a hook via WriteConfig.
+	cfg := HookConfig{Hooks: []HookEntry{
+		{Name: "SessionStart", Enabled: false},
+	}}
+	if err := WriteConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify [sink] section survived.
+	data, _ := os.ReadFile(path)
+	content := string(data)
+	if !strings.Contains(content, "[sink]") {
+		t.Error("WriteConfig destroyed [sink] section")
+	}
+	if !strings.Contains(content, "forward = yes") {
+		t.Error("WriteConfig destroyed sink forward setting")
+	}
+	if !strings.Contains(content, "endpoint = http://localhost:9800/ingest") {
+		t.Error("WriteConfig destroyed sink endpoint setting")
+	}
+
+	// Verify hook was actually toggled.
+	if !strings.Contains(content, "SessionStart = no") {
+		t.Error("WriteConfig did not toggle SessionStart to no")
+	}
+}
+
+func TestWriteConfig_NoExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "new_config.conf")
+
+	cfg := HookConfig{Hooks: []HookEntry{
+		{Name: "SessionStart", Enabled: true},
+	}}
+	if err := WriteConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := os.ReadFile(path)
+	content := string(data)
+	if !strings.Contains(content, "[hooks]") {
+		t.Error("WriteConfig should write [hooks] section")
+	}
+	if !strings.Contains(content, "SessionStart = yes") {
+		t.Error("WriteConfig should write hook entry")
+	}
+}

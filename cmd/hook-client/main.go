@@ -105,10 +105,11 @@ func main() {
 
 	// Enrich with monitor metadata.
 	inputData["_monitor"] = map[string]interface{}{
-		"timestamp":   time.Now().UTC().Format(time.RFC3339Nano),
-		"project_dir": inputData["cwd"],
-		"plugin_root": os.Getenv("CLAUDE_PLUGIN_ROOT"),
-		"is_remote":   os.Getenv("CLAUDE_CODE_REMOTE") == "true",
+		"timestamp":    time.Now().UTC().Format(time.RFC3339Nano),
+		"project_dir":  inputData["cwd"],
+		"plugin_root":  os.Getenv("CLAUDE_PLUGIN_ROOT"),
+		"is_remote":    os.Getenv("CLAUDE_CODE_REMOTE") == "true",
+		"has_claude_md": hasClaudeMD(inputData),
 	}
 
 	// Marshal to JSON.
@@ -361,6 +362,18 @@ func getEnvInt(key string, defaultValue int) int {
 		return defaultValue
 	}
 	return n
+}
+
+// hasClaudeMD checks whether a CLAUDE.md file exists in the project directory
+// extracted from the hook payload's "cwd" field. Returns false if cwd is missing
+// or the file does not exist.
+func hasClaudeMD(inputData map[string]interface{}) bool {
+	cwd, ok := inputData["cwd"].(string)
+	if !ok || cwd == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(cwd, "CLAUDE.md"))
+	return err == nil
 }
 
 // runInstallHooks registers all hooks in ~/.claude/settings.json.

@@ -364,6 +364,58 @@ func TestGetEnvInt(t *testing.T) {
 }
 
 // ============================================================
+// hasClaudeMD — CLAUDE.md detection
+// ============================================================
+
+func TestHasClaudeMD_Exists(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("# test"), 0644)
+
+	data := map[string]interface{}{"cwd": dir}
+	if !hasClaudeMD(data) {
+		t.Error("hasClaudeMD should return true when CLAUDE.md exists")
+	}
+}
+
+func TestHasClaudeMD_NotExists(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	data := map[string]interface{}{"cwd": dir}
+	if hasClaudeMD(data) {
+		t.Error("hasClaudeMD should return false when CLAUDE.md does not exist")
+	}
+}
+
+func TestHasClaudeMD_NoCwd(t *testing.T) {
+	t.Parallel()
+
+	data := map[string]interface{}{}
+	if hasClaudeMD(data) {
+		t.Error("hasClaudeMD should return false when cwd is missing")
+	}
+}
+
+func TestHasClaudeMD_EmptyCwd(t *testing.T) {
+	t.Parallel()
+
+	data := map[string]interface{}{"cwd": ""}
+	if hasClaudeMD(data) {
+		t.Error("hasClaudeMD should return false when cwd is empty")
+	}
+}
+
+func TestHasClaudeMD_NonStringCwd(t *testing.T) {
+	t.Parallel()
+
+	data := map[string]interface{}{"cwd": 42}
+	if hasClaudeMD(data) {
+		t.Error("hasClaudeMD should return false when cwd is not a string")
+	}
+}
+
+// ============================================================
 // sendToMonitor — integration with real httptest server
 // ============================================================
 
